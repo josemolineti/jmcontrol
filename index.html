@@ -101,7 +101,8 @@ window.addEventListener('error', e => showFatalError((e.message||'erro desconhec
 window.addEventListener('unhandledrejection', e => showFatalError('promise: ' + (e.reason && e.reason.message ? e.reason.message : JSON.stringify(e.reason))));
 
 const money = v => (v||0).toLocaleString('pt-BR', {style:'currency', currency:'BRL'});
-let supabase, currentCycle;
+let sb, currentCycle;
+const sbLib = window.supabase;
 
 function saveConfig(){
   const url = document.getElementById('cfg-url').value.trim();
@@ -119,8 +120,8 @@ async function init(){
     document.getElementById('setup').classList.remove('hidden');
     return;
   }
-  supabase = window.supabase.createClient(url, key);
-  const { data: { session } } = await supabase.auth.getSession();
+  sb = sbLib.createClient(url, key);
+  const { data: { session } } = await sb.auth.getSession();
   if(!session){
     document.getElementById('login').classList.remove('hidden');
     return;
@@ -133,7 +134,7 @@ async function init(){
 async function doLogin(){
   const email = document.getElementById('li-email').value.trim();
   const password = document.getElementById('li-pass').value;
-  const { error } = await supabase.auth.signInWithPassword({ email, password });
+  const { error } = await sb.auth.signInWithPassword({ email, password });
   if(error){
     document.getElementById('li-msg').textContent = error.message;
     return;
@@ -160,9 +161,9 @@ async function getCycleForDate(dateStr){
   const endStr = end.toISOString().slice(0,10);
   const label = start.toLocaleDateString('pt-BR', {month:'long', year:'2-digit'});
 
-  let { data } = await supabase.from('cycles').select('*').eq('start_date', startStr).maybeSingle();
+  let { data } = await sb.from('cycles').select('*').eq('start_date', startStr).maybeSingle();
   if(!data){
-    const { data: created } = await supabase.from('cycles').insert({
+    const { data: created } = await sb.from('cycles').insert({
       label, start_date: startStr, end_date: endStr, salario_definido: 0
     }).select().single();
     data = created;
@@ -183,14 +184,14 @@ async function refresh(){
   const cid = currentCycle.id;
 
   const [{data:pl},{data:fl},{data:vl},{data:cr},{data:pv},{data:fa},{data:efundo},{data:epes}] = await Promise.all([
-    supabase.from('personal_ledger').select('*').eq('cycle_id', cid),
-    supabase.from('fund_ledger').select('*'),
-    supabase.from('vale_ledger').select('*').eq('cycle_id', cid),
-    supabase.from('v_credito_saldo').select('*').eq('cycle_id', cid),
-    supabase.from('previdencia').select('*'),
-    supabase.from('fatura_items').select('*').eq('fechado', false),
-    supabase.from('fund_cash_ledger').select('*'),
-    supabase.from('personal_cash_ledger').select('*'),
+    sb.from('personal_ledger').select('*').eq('cycle_id', cid),
+    sb.from('fund_ledger').select('*'),
+    sb.from('vale_ledger').select('*').eq('cycle_id', cid),
+    sb.from('v_credito_saldo').select('*').eq('cycle_id', cid),
+    sb.from('previdencia').select('*'),
+    sb.from('fatura_items').select('*').eq('fechado', false),
+    sb.from('fund_cash_ledger').select('*'),
+    sb.from('personal_cash_ledger').select('*'),
   ]);
 
   const saldoPessoal = (pl||[]).reduce((s,x)=> s + (x.type==='entrada'? x.amount : -x.amount), 0);
@@ -360,7 +361,7 @@ async function submitPersonal(type){
   const amount = num('v-amount'); if(!amount) return;
   const date = getDate();
   const cycle = await getCycleForDate(date);
-  await supabase.from('personal_ledger').insert({
+  await sb.from('personal_ledger').insert({
     cycle_id: cycle.id, date, type, amount, category:'outros', description: val('v-desc')
   });
   closeModal(); await refresh();
@@ -370,7 +371,7 @@ async function submitFund(type, source){
   const amount = num('v-amount'); if(!amount) return;
   const date = getDate();
   const cycle = await getCycleForDate(date);
-  await supabase.from('fund_ledger').insert({
+  await sb.from('fund_ledger').insert({
     cycle_id: cycle.id, date, type, source, amount, description: val('v-desc')
   });
   closeModal(); await refresh();
@@ -381,10 +382,10 @@ async function submitResgate(){
   const desc = val('v-desc');
   const date = getDate();
   const cycle = await getCycleForDate(date);
-  const { data: fundTx } = await supabase.from('fund_ledger').insert({
+  const { data: fundTx } = await sb.from('fund_ledger').insert({
     cycle_id: cycle.id, date, type:'despesa', source:'interna', amount, description: desc, auto_gerado:true
   }).select().single();
-  await supabase.from('personal_ledger').insert({
+  await sb.from('personal_ledger').insert({
     cycle_id: cycle.id, date, type:'entrada', amount, category:'resgate_fundo',
     description: desc, auto_gerado:true, origem_id: fundTx.id
   });
@@ -395,7 +396,7 @@ async function submitCartao(){
   const amount = num('v-amount'); if(!amount) return;
   const date = getDate();
   const cycle = await getCycleForDate(date);
-  await supabase.from('fatura_items').insert({
+  await sb.from('fatura_items').insert({
     cycle_id: cycle.id, date, amount, description: val('v-desc'), owner: val('v-owner')
   });
   closeModal(); await refresh();
@@ -408,14 +409,14 @@ async function submitVale(){
   const desc = val('v-desc');
   const date = getDate();
   const cycle = await getCycleForDate(date);
-  await supabase.from('vale_ledger').insert({
+  await sb.from('vale_ledger').insert({
     cycle_id: cycle.id, date, type, amount, description: desc, uso_pessoal: usoPessoal
   });
   if(type==='saida' && usoPessoal){
-    const { data: fundTx } = await supabase.from('fund_ledger').insert({
+    const { data: fundTx } = await sb.from('fund_ledger').insert({
       cycle_id: cycle.id, date, type:'faturamento', source:'interna', amount, description:`Vale uso pessoal: ${desc}`, auto_gerado:true
     }).select().single();
-    await supabase.from('personal_ledger').insert({
+    await sb.from('personal_ledger').insert({
       cycle_id: cycle.id, date, type:'entrada', amount, category:'vale_pessoal',
       description: desc, auto_gerado:true, origem_id: fundTx.id
     });
@@ -443,10 +444,10 @@ async function submitCreditoConceder(){
   const amount = num('v-amount'); if(!amount) return;
   const date = getDate();
   const cycle = await getCycleForDate(date);
-  await supabase.from('credito').insert({
+  await sb.from('credito').insert({
     cycle_id: cycle.id, date, amount_concedido: amount, motivo: val('v-desc')
   });
-  await supabase.from('fund_ledger').insert({
+  await sb.from('fund_ledger').insert({
     cycle_id: cycle.id, date, type:'despesa', source:'interna', amount, description:`Crédito concedido: ${val('v-desc')}`, auto_gerado:true
   });
   closeModal(); await refresh();
@@ -455,9 +456,9 @@ async function submitCreditoConceder(){
 async function submitCreditoUsar(){
   const amount = num('v-amount'); if(!amount) return;
   const date = getDate();
-  const { data: creditos } = await supabase.from('v_credito_saldo').select('*').gt('saldo_disponivel', 0).order('credito_id');
+  const { data: creditos } = await sb.from('v_credito_saldo').select('*').gt('saldo_disponivel', 0).order('credito_id');
   if(!creditos || !creditos.length) return alert('Sem crédito disponível');
-  await supabase.from('credito_uso').insert({
+  await sb.from('credito_uso').insert({
     credito_id: creditos[0].credito_id, date, amount, description: val('v-desc')
   });
   closeModal(); await refresh();
@@ -474,15 +475,15 @@ async function submitPrevidencia(){
     if(!confirm(`Confirma o resgate de ${money(amount)} da previdência?\nMotivo: ${motivo}`)) return;
     if(!confirm('Tem certeza? Esse valor é para reserva pessoal, não é recomendado resgatar sem motivo digno.')) return;
   }
-  await supabase.from('previdencia').insert({
+  await sb.from('previdencia').insert({
     date, type, amount, motivo, status:'confirmado', confirmado_em: new Date().toISOString()
   });
   if(type==='deposito'){
-    await supabase.from('personal_ledger').insert({
+    await sb.from('personal_ledger').insert({
       cycle_id: cycle.id, date, type:'saida', amount, category:'previdencia_deposito', description: motivo, auto_gerado:true
     });
   } else {
-    await supabase.from('personal_ledger').insert({
+    await sb.from('personal_ledger').insert({
       cycle_id: cycle.id, date, type:'entrada', amount, category:'previdencia_resgate', description: motivo, auto_gerado:true
     });
   }
@@ -494,7 +495,7 @@ async function submitEspecie(kind){
   const date = getDate();
   const cycle = await getCycleForDate(date);
   const table = kind==='especie_fundo' ? 'fund_cash_ledger' : 'personal_cash_ledger';
-  await supabase.from(table).insert({
+  await sb.from(table).insert({
     cycle_id: cycle.id, date, type: val('v-type'), amount, description: val('v-desc')
   });
   closeModal(); await refresh();
@@ -503,7 +504,7 @@ async function submitEspecie(kind){
 async function submitReceber(){
   const amount = num('v-amount'); if(!amount) return;
   const date = getDate();
-  await supabase.from('receivables').insert({
+  await sb.from('receivables').insert({
     date, amount, description: val('v-desc'), destino: val('v-owner')
   });
   closeModal(); alert('Registrado em valores a receber.');
