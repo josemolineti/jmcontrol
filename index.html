@@ -33,6 +33,7 @@
   <input id="li-pass" type="password" placeholder="senha" class="w-full mb-4 p-3 rounded-lg bg-slate-800 border border-slate-700">
   <button onclick="doLogin()" class="btn bg-emerald-600 w-full">Entrar</button>
   <p id="li-msg" class="text-xs text-rose-400 mt-2"></p>
+  <button onclick="resetConfig()" class="mt-4 w-full text-slate-500 text-xs underline">Trocar URL/chave do Supabase</button>
 </div>
 
 <div id="app" class="hidden pb-24">
@@ -105,11 +106,23 @@ let sb, currentCycle;
 const sbLib = window.supabase;
 
 function saveConfig(){
-  const url = document.getElementById('cfg-url').value.trim();
+  let url = document.getElementById('cfg-url').value.trim();
   const key = document.getElementById('cfg-key').value.trim();
   if(!url || !key) return alert('Preencha os dois campos');
+  try {
+    url = new URL(url).origin; // mantém só https://xxxx.supabase.co, remove /rest/v1 etc.
+  } catch(e){
+    return alert('URL inválida. Copie o "Project URL" em Settings → API.');
+  }
   localStorage.setItem('sb_url', url);
   localStorage.setItem('sb_key', key);
+  location.reload();
+}
+
+function resetConfig(){
+  if(!confirm('Isso vai apagar a configuração salva neste aparelho (você vai precisar colar a URL/chave de novo). Continuar?')) return;
+  localStorage.removeItem('sb_url');
+  localStorage.removeItem('sb_key');
   location.reload();
 }
 
