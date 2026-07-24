@@ -91,6 +91,15 @@
 </div>
 
 <script>
+function showFatalError(msg){
+  const box = document.createElement('div');
+  box.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:999;background:#7f1d1d;color:white;padding:14px;font-family:monospace;font-size:12px;white-space:pre-wrap;max-height:60vh;overflow:auto;';
+  box.textContent = 'ERRO: ' + msg;
+  document.body.prepend(box);
+}
+window.addEventListener('error', e => showFatalError((e.message||'erro desconhecido') + ' (' + (e.filename||'') + ':' + (e.lineno||'') + ')'));
+window.addEventListener('unhandledrejection', e => showFatalError('promise: ' + (e.reason && e.reason.message ? e.reason.message : JSON.stringify(e.reason))));
+
 const money = v => (v||0).toLocaleString('pt-BR', {style:'currency', currency:'BRL'});
 let supabase, currentCycle;
 
@@ -500,7 +509,7 @@ async function submitReceber(){
   closeModal(); alert('Registrado em valores a receber.');
 }
 
-init();
+init().catch(e => showFatalError(e.message || String(e)));
 
 // PWA install
 if('serviceWorker' in navigator){
