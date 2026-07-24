@@ -1,0 +1,511 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>JMControl</title>
+<link rel="manifest" href="manifest.json">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#0f172a">
+<link rel="apple-touch-icon" href="icon.svg">
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+  body{-webkit-tap-highlight-color:transparent; padding-bottom:env(safe-area-inset-bottom);}
+  .card{background:#1e293b;border-radius:16px;padding:16px;}
+  .btn{border-radius:14px;padding:14px;font-weight:600;text-align:center;}
+</style>
+</head>
+<body class="bg-slate-950 text-slate-100 min-h-screen">
+
+<div id="setup" class="p-6 max-w-md mx-auto hidden">
+  <h1 class="text-xl font-bold mb-4">Configuração inicial</h1>
+  <p class="text-sm text-slate-400 mb-4">Cole a URL e a chave anon do seu projeto Supabase (Settings → API).</p>
+  <input id="cfg-url" placeholder="Supabase URL" class="w-full mb-2 p-3 rounded-lg bg-slate-800 border border-slate-700">
+  <input id="cfg-key" placeholder="Supabase anon key" class="w-full mb-4 p-3 rounded-lg bg-slate-800 border border-slate-700">
+  <button onclick="saveConfig()" class="btn bg-emerald-600 w-full">Salvar e entrar</button>
+</div>
+
+<div id="login" class="p-6 max-w-md mx-auto hidden">
+  <h1 class="text-xl font-bold mb-4">Entrar</h1>
+  <input id="li-email" placeholder="email" class="w-full mb-2 p-3 rounded-lg bg-slate-800 border border-slate-700">
+  <input id="li-pass" type="password" placeholder="senha" class="w-full mb-4 p-3 rounded-lg bg-slate-800 border border-slate-700">
+  <button onclick="doLogin()" class="btn bg-emerald-600 w-full">Entrar</button>
+  <p id="li-msg" class="text-xs text-rose-400 mt-2"></p>
+</div>
+
+<div id="app" class="hidden pb-24">
+  <header class="p-4 sticky top-0 bg-slate-950/90 backdrop-blur z-10 border-b border-slate-800 flex justify-between items-center">
+    <div>
+      <h1 class="text-lg font-bold">JMControl</h1>
+      <p id="cycle-label" class="text-xs text-slate-400"></p>
+    </div>
+    <button onclick="openModal('receber')" class="text-xs text-slate-400 underline">A receber</button>
+  </header>
+
+  <main class="p-4 space-y-4 max-w-md mx-auto">
+
+    <section class="grid grid-cols-2 gap-3">
+      <div class="card"><p class="text-xs text-slate-400">Saldo pessoal (ciclo)</p><p id="s-pessoal" class="text-2xl font-bold text-emerald-400">R$ 0,00</p></div>
+      <div class="card"><p class="text-xs text-slate-400">Fundo (total)</p><p id="s-fundo" class="text-2xl font-bold text-sky-400">R$ 0,00</p></div>
+      <div class="card"><p class="text-xs text-slate-400">Vale disponível</p><p id="s-vale" class="text-lg font-semibold">R$ 0,00</p></div>
+      <div class="card"><p class="text-xs text-slate-400">Crédito disponível</p><p id="s-credito" class="text-lg font-semibold">R$ 0,00</p></div>
+      <div class="card"><p class="text-xs text-slate-400">Previdência</p><p id="s-prev" class="text-lg font-semibold">R$ 0,00</p></div>
+      <div class="card"><p class="text-xs text-slate-400">Fatura aberta (pessoal)</p><p id="s-fatura-p" class="text-lg font-semibold text-amber-400">R$ 0,00</p></div>
+      <div class="card"><p class="text-xs text-slate-400">Fatura aberta (fundo)</p><p id="s-fatura-f" class="text-lg font-semibold text-amber-400">R$ 0,00</p></div>
+      <div class="card"><p class="text-xs text-slate-400">Espécie (fundo / pessoal)</p><p id="s-especie" class="text-lg font-semibold">R$0 / R$0</p></div>
+    </section>
+
+    <section>
+      <p class="text-sm text-slate-400 mb-2">Lançamento rápido</p>
+      <div class="grid grid-cols-2 gap-3">
+        <button class="btn bg-rose-700" onclick="openModal('gasto_pessoal')">Gasto pessoal</button>
+        <button class="btn bg-emerald-700" onclick="openModal('entrada_pessoal')">Entrada pessoal</button>
+        <button class="btn bg-rose-900" onclick="openModal('despesa_fundo')">Despesa do fundo</button>
+        <button class="btn bg-sky-800" onclick="openModal('faturamento_fundo')">Faturamento do fundo</button>
+        <button class="btn bg-indigo-700 col-span-2" onclick="openModal('resgate_fundo')">Usar $ do fundo pra mim</button>
+        <button class="btn bg-fuchsia-800 col-span-2" onclick="openModal('cartao')">Compra no cartão</button>
+        <button class="btn bg-lime-800" onclick="openModal('vale')">Vale alimentação</button>
+        <button class="btn bg-yellow-800" onclick="openModal('credito')">Crédito</button>
+        <button class="btn bg-cyan-900 col-span-2" onclick="openModal('previdencia')">Previdência pessoal</button>
+        <button class="btn bg-slate-700" onclick="openModal('especie_fundo')">Espécie fundo</button>
+        <button class="btn bg-slate-700" onclick="openModal('especie_pessoal')">Espécie pessoal</button>
+      </div>
+    </section>
+
+    <section>
+      <p class="text-sm text-slate-400 mb-2">Últimos lançamentos</p>
+      <div id="timeline" class="space-y-2"></div>
+    </section>
+
+  </main>
+</div>
+
+<!-- Modal -->
+<div id="modal-backdrop" class="hidden fixed inset-0 bg-black/60 flex items-end z-20">
+  <div class="bg-slate-900 w-full rounded-t-2xl p-5 max-w-md mx-auto max-h-[85vh] overflow-y-auto">
+    <div id="modal-body"></div>
+    <button onclick="closeModal()" class="mt-4 w-full text-slate-400 text-sm">Cancelar</button>
+  </div>
+</div>
+
+<script>
+const money = v => (v||0).toLocaleString('pt-BR', {style:'currency', currency:'BRL'});
+let supabase, currentCycle;
+
+function saveConfig(){
+  const url = document.getElementById('cfg-url').value.trim();
+  const key = document.getElementById('cfg-key').value.trim();
+  if(!url || !key) return alert('Preencha os dois campos');
+  localStorage.setItem('sb_url', url);
+  localStorage.setItem('sb_key', key);
+  location.reload();
+}
+
+async function init(){
+  const url = localStorage.getItem('sb_url');
+  const key = localStorage.getItem('sb_key');
+  if(!url || !key){
+    document.getElementById('setup').classList.remove('hidden');
+    return;
+  }
+  supabase = window.supabase.createClient(url, key);
+  const { data: { session } } = await supabase.auth.getSession();
+  if(!session){
+    document.getElementById('login').classList.remove('hidden');
+    return;
+  }
+  document.getElementById('app').classList.remove('hidden');
+  await ensureCycle();
+  await refresh();
+}
+
+async function doLogin(){
+  const email = document.getElementById('li-email').value.trim();
+  const password = document.getElementById('li-pass').value;
+  const { error } = await supabase.auth.signInWithPassword({ email, password });
+  if(error){
+    document.getElementById('li-msg').textContent = error.message;
+    return;
+  }
+  document.getElementById('login').classList.add('hidden');
+  document.getElementById('app').classList.remove('hidden');
+  await ensureCycle();
+  await refresh();
+}
+
+// Ciclo: dia 25 a dia 25 — resolve o ciclo correto a partir de QUALQUER data
+// (o dia em que o lançamento aconteceu, não o dia em que você registrou)
+async function getCycleForDate(dateStr){
+  const d = new Date(dateStr + 'T12:00:00');
+  let start, end;
+  if(d.getDate() >= 25){
+    start = new Date(d.getFullYear(), d.getMonth(), 25);
+    end = new Date(d.getFullYear(), d.getMonth()+1, 25);
+  } else {
+    start = new Date(d.getFullYear(), d.getMonth()-1, 25);
+    end = new Date(d.getFullYear(), d.getMonth(), 25);
+  }
+  const startStr = start.toISOString().slice(0,10);
+  const endStr = end.toISOString().slice(0,10);
+  const label = start.toLocaleDateString('pt-BR', {month:'long', year:'2-digit'});
+
+  let { data } = await supabase.from('cycles').select('*').eq('start_date', startStr).maybeSingle();
+  if(!data){
+    const { data: created } = await supabase.from('cycles').insert({
+      label, start_date: startStr, end_date: endStr, salario_definido: 0
+    }).select().single();
+    data = created;
+  }
+  return data;
+}
+
+function todayStr(){
+  return new Date().toISOString().slice(0,10);
+}
+
+async function ensureCycle(){
+  currentCycle = await getCycleForDate(todayStr());
+  document.getElementById('cycle-label').textContent = `Ciclo ${currentCycle.label} · ${new Date(currentCycle.start_date).toLocaleDateString('pt-BR')} – ${new Date(currentCycle.end_date).toLocaleDateString('pt-BR')}`;
+}
+
+async function refresh(){
+  const cid = currentCycle.id;
+
+  const [{data:pl},{data:fl},{data:vl},{data:cr},{data:pv},{data:fa},{data:efundo},{data:epes}] = await Promise.all([
+    supabase.from('personal_ledger').select('*').eq('cycle_id', cid),
+    supabase.from('fund_ledger').select('*'),
+    supabase.from('vale_ledger').select('*').eq('cycle_id', cid),
+    supabase.from('v_credito_saldo').select('*').eq('cycle_id', cid),
+    supabase.from('previdencia').select('*'),
+    supabase.from('fatura_items').select('*').eq('fechado', false),
+    supabase.from('fund_cash_ledger').select('*'),
+    supabase.from('personal_cash_ledger').select('*'),
+  ]);
+
+  const saldoPessoal = (pl||[]).reduce((s,x)=> s + (x.type==='entrada'? x.amount : -x.amount), 0);
+  const saldoFundo = (fl||[]).reduce((s,x)=> s + (x.type==='faturamento'? x.amount : -x.amount), 0);
+  const saldoVale = (vl||[]).reduce((s,x)=> s + (x.type==='entrada'? x.amount : -x.amount), 0);
+  const saldoCredito = (cr||[]).reduce((s,x)=> s + x.saldo_disponivel, 0);
+  const saldoPrev = (pv||[]).reduce((s,x)=> x.status==='confirmado' ? s + (x.type==='deposito'? x.amount : -x.amount) : s, 0);
+  const faturaPessoal = (fa||[]).filter(x=>x.owner==='pessoal').reduce((s,x)=>s+x.amount,0);
+  const faturaFundo = (fa||[]).filter(x=>x.owner==='fundo').reduce((s,x)=>s+x.amount,0);
+  const especieFundo = (efundo||[]).reduce((s,x)=> s + (x.type==='entrada'? x.amount : -x.amount), 0);
+  const especiePessoal = (epes||[]).reduce((s,x)=> s + (x.type==='entrada'? x.amount : -x.amount), 0);
+
+  document.getElementById('s-pessoal').textContent = money(saldoPessoal);
+  document.getElementById('s-fundo').textContent = money(saldoFundo);
+  document.getElementById('s-vale').textContent = money(saldoVale);
+  document.getElementById('s-credito').textContent = money(saldoCredito);
+  document.getElementById('s-prev').textContent = money(saldoPrev);
+  document.getElementById('s-fatura-p').textContent = money(faturaPessoal);
+  document.getElementById('s-fatura-f').textContent = money(faturaFundo);
+  document.getElementById('s-especie').textContent = `${money(especieFundo)} / ${money(especiePessoal)}`;
+
+  renderTimeline(pl, fl, vl);
+}
+
+function renderTimeline(pl, fl, vl){
+  const items = [
+    ...(pl||[]).map(x=>({...x, origem:'Pessoal'})),
+    ...(fl||[]).map(x=>({...x, origem:'Fundo'})),
+    ...(vl||[]).map(x=>({...x, origem:'Vale'})),
+  ].sort((a,b)=> new Date(b.created_at) - new Date(a.created_at)).slice(0,15);
+
+  document.getElementById('timeline').innerHTML = items.map(i => `
+    <div class="card flex justify-between items-center py-2">
+      <div>
+        <p class="text-sm">${i.description || '(sem descrição)'}</p>
+        <p class="text-xs text-slate-500">${i.origem} · ${i.category || i.source || i.type}</p>
+      </div>
+      <p class="font-semibold ${i.type==='entrada'||i.type==='faturamento' ? 'text-emerald-400':'text-rose-400'}">
+        ${i.type==='entrada'||i.type==='faturamento' ? '+' : '-'}${money(i.amount)}
+      </p>
+    </div>
+  `).join('') || '<p class="text-sm text-slate-500">Nenhum lançamento ainda.</p>';
+}
+
+// ---------------- MODALS ----------------
+
+function field(label, id, type='number', placeholder=''){
+  return `<label class="text-xs text-slate-400">${label}</label>
+    <input id="${id}" type="${type}" placeholder="${placeholder}" class="w-full mb-3 p-3 rounded-lg bg-slate-800 border border-slate-700">`;
+}
+
+function dateField(){
+  return `<label class="text-xs text-slate-400">Data (quando aconteceu, não quando você está lançando)</label>
+    <input id="v-date" type="date" value="${todayStr()}" class="w-full mb-3 p-3 rounded-lg bg-slate-800 border border-slate-700">`;
+}
+
+function getDate(){ return val('v-date') || todayStr(); }
+
+function openModal(kind){
+  const body = document.getElementById('modal-body');
+  let html = '';
+
+  if(kind==='gasto_pessoal' || kind==='entrada_pessoal'){
+    html = `<h2 class="font-bold mb-3">${kind==='gasto_pessoal'?'Gasto pessoal':'Entrada pessoal'}</h2>
+      ${dateField()}
+      ${field('Valor (R$)','v-amount')}
+      ${field('Descrição','v-desc','text')}
+      <button class="btn bg-emerald-600 w-full" onclick="submitPersonal('${kind==='gasto_pessoal'?'saida':'entrada'}')">Salvar</button>`;
+  }
+  else if(kind==='despesa_fundo' || kind==='faturamento_fundo'){
+    html = `<h2 class="font-bold mb-3">${kind==='despesa_fundo'?'Despesa do fundo':'Faturamento do fundo'}</h2>
+      ${dateField()}
+      ${field('Valor (R$)','v-amount')}
+      ${field('Descrição','v-desc','text')}
+      <button class="btn bg-sky-600 w-full" onclick="submitFund('${kind==='despesa_fundo'?'despesa':'faturamento'}', 'externa')">Salvar</button>`;
+  }
+  else if(kind==='resgate_fundo'){
+    html = `<h2 class="font-bold mb-3">Usar dinheiro do fundo para mim</h2>
+      <p class="text-xs text-slate-400 mb-3">Isso cria uma entrada no seu saldo pessoal E registra a saída correspondente no fundo (movimentação interna).</p>
+      ${dateField()}
+      ${field('Valor (R$)','v-amount')}
+      ${field('Motivo','v-desc','text')}
+      <button class="btn bg-indigo-600 w-full" onclick="submitResgate()">Salvar</button>`;
+  }
+  else if(kind==='cartao'){
+    html = `<h2 class="font-bold mb-3">Compra no cartão</h2>
+      ${dateField()}
+      ${field('Valor (R$)','v-amount')}
+      ${field('Descrição','v-desc','text')}
+      <label class="text-xs text-slate-400">Quem paga</label>
+      <select id="v-owner" class="w-full mb-3 p-3 rounded-lg bg-slate-800 border border-slate-700">
+        <option value="pessoal">Pessoal</option>
+        <option value="fundo">Fundo</option>
+      </select>
+      <button class="btn bg-fuchsia-600 w-full" onclick="submitCartao()">Salvar</button>`;
+  }
+  else if(kind==='vale'){
+    html = `<h2 class="font-bold mb-3">Vale alimentação</h2>
+      ${dateField()}
+      ${field('Valor (R$)','v-amount')}
+      ${field('Descrição','v-desc','text')}
+      <label class="text-xs text-slate-400">Tipo</label>
+      <select id="v-type" class="w-full mb-3 p-3 rounded-lg bg-slate-800 border border-slate-700">
+        <option value="saida">Saída (uso)</option>
+        <option value="entrada">Entrada (recarga)</option>
+      </select>
+      <label class="flex items-center gap-2 mb-3 text-sm"><input type="checkbox" id="v-pessoal"> Uso pessoal (desconta do meu saldo, credita o fundo)</label>
+      <button class="btn bg-lime-600 w-full" onclick="submitVale()">Salvar</button>`;
+  }
+  else if(kind==='credito'){
+    html = `<h2 class="font-bold mb-3">Crédito</h2>
+      <div class="flex gap-2 mb-3">
+        <button class="btn bg-yellow-700 flex-1" onclick="creditoTab('conceder')">Conceder</button>
+        <button class="btn bg-yellow-900 flex-1" onclick="creditoTab('usar')">Usar</button>
+      </div>
+      <div id="credito-body"></div>`;
+  }
+  else if(kind==='previdencia'){
+    html = `<h2 class="font-bold mb-3">Previdência pessoal</h2>
+      ${dateField()}
+      ${field('Valor (R$)','v-amount')}
+      ${field('Motivo (obrigatório para resgate)','v-desc','text')}
+      <label class="text-xs text-slate-400">Tipo</label>
+      <select id="v-type" class="w-full mb-3 p-3 rounded-lg bg-slate-800 border border-slate-700">
+        <option value="deposito">Depósito</option>
+        <option value="resgate">Resgate</option>
+      </select>
+      <button class="btn bg-cyan-700 w-full" onclick="submitPrevidencia()">Continuar</button>`;
+  }
+  else if(kind==='especie_fundo' || kind==='especie_pessoal'){
+    html = `<h2 class="font-bold mb-3">${kind==='especie_fundo'?'Espécie do fundo':'Espécie pessoal'}</h2>
+      ${dateField()}
+      ${field('Valor (R$)','v-amount')}
+      ${field('Descrição','v-desc','text')}
+      <label class="text-xs text-slate-400">Tipo</label>
+      <select id="v-type" class="w-full mb-3 p-3 rounded-lg bg-slate-800 border border-slate-700">
+        <option value="saida">Saída</option>
+        <option value="entrada">Entrada</option>
+      </select>
+      <button class="btn bg-slate-600 w-full" onclick="submitEspecie('${kind}')">Salvar</button>`;
+  }
+  else if(kind==='receber'){
+    html = `<h2 class="font-bold mb-3">Valores a receber</h2>
+      ${dateField()}
+      ${field('Valor (R$)','v-amount')}
+      ${field('Descrição','v-desc','text')}
+      <label class="text-xs text-slate-400">Destino</label>
+      <select id="v-owner" class="w-full mb-3 p-3 rounded-lg bg-slate-800 border border-slate-700">
+        <option value="pessoal">Pessoal</option>
+        <option value="fundo">Fundo</option>
+      </select>
+      <button class="btn bg-amber-600 w-full" onclick="submitReceber()">Salvar</button>`;
+  }
+
+  body.innerHTML = html;
+  document.getElementById('modal-backdrop').classList.remove('hidden');
+}
+
+function closeModal(){
+  document.getElementById('modal-backdrop').classList.add('hidden');
+}
+
+function val(id){ return document.getElementById(id).value; }
+function num(id){ return parseFloat(document.getElementById(id).value.replace(',','.')) || 0; }
+
+async function submitPersonal(type){
+  const amount = num('v-amount'); if(!amount) return;
+  const date = getDate();
+  const cycle = await getCycleForDate(date);
+  await supabase.from('personal_ledger').insert({
+    cycle_id: cycle.id, date, type, amount, category:'outros', description: val('v-desc')
+  });
+  closeModal(); await refresh();
+}
+
+async function submitFund(type, source){
+  const amount = num('v-amount'); if(!amount) return;
+  const date = getDate();
+  const cycle = await getCycleForDate(date);
+  await supabase.from('fund_ledger').insert({
+    cycle_id: cycle.id, date, type, source, amount, description: val('v-desc')
+  });
+  closeModal(); await refresh();
+}
+
+async function submitResgate(){
+  const amount = num('v-amount'); if(!amount) return;
+  const desc = val('v-desc');
+  const date = getDate();
+  const cycle = await getCycleForDate(date);
+  const { data: fundTx } = await supabase.from('fund_ledger').insert({
+    cycle_id: cycle.id, date, type:'despesa', source:'interna', amount, description: desc, auto_gerado:true
+  }).select().single();
+  await supabase.from('personal_ledger').insert({
+    cycle_id: cycle.id, date, type:'entrada', amount, category:'resgate_fundo',
+    description: desc, auto_gerado:true, origem_id: fundTx.id
+  });
+  closeModal(); await refresh();
+}
+
+async function submitCartao(){
+  const amount = num('v-amount'); if(!amount) return;
+  const date = getDate();
+  const cycle = await getCycleForDate(date);
+  await supabase.from('fatura_items').insert({
+    cycle_id: cycle.id, date, amount, description: val('v-desc'), owner: val('v-owner')
+  });
+  closeModal(); await refresh();
+}
+
+async function submitVale(){
+  const amount = num('v-amount'); if(!amount) return;
+  const type = val('v-type');
+  const usoPessoal = document.getElementById('v-pessoal').checked;
+  const desc = val('v-desc');
+  const date = getDate();
+  const cycle = await getCycleForDate(date);
+  await supabase.from('vale_ledger').insert({
+    cycle_id: cycle.id, date, type, amount, description: desc, uso_pessoal: usoPessoal
+  });
+  if(type==='saida' && usoPessoal){
+    const { data: fundTx } = await supabase.from('fund_ledger').insert({
+      cycle_id: cycle.id, date, type:'faturamento', source:'interna', amount, description:`Vale uso pessoal: ${desc}`, auto_gerado:true
+    }).select().single();
+    await supabase.from('personal_ledger').insert({
+      cycle_id: cycle.id, date, type:'entrada', amount, category:'vale_pessoal',
+      description: desc, auto_gerado:true, origem_id: fundTx.id
+    });
+  }
+  closeModal(); await refresh();
+}
+
+let creditoMode = 'conceder';
+function creditoTab(mode){
+  creditoMode = mode;
+  document.getElementById('credito-body').innerHTML = mode==='conceder' ? `
+    ${dateField()}
+    ${field('Valor concedido (R$)','v-amount')}
+    ${field('Motivo','v-desc','text')}
+    <button class="btn bg-yellow-600 w-full" onclick="submitCreditoConceder()">Conceder crédito</button>
+  ` : `
+    ${dateField()}
+    ${field('Valor usado (R$)','v-amount')}
+    ${field('Descrição do uso','v-desc','text')}
+    <button class="btn bg-yellow-600 w-full" onclick="submitCreditoUsar()">Usar crédito</button>
+  `;
+}
+
+async function submitCreditoConceder(){
+  const amount = num('v-amount'); if(!amount) return;
+  const date = getDate();
+  const cycle = await getCycleForDate(date);
+  await supabase.from('credito').insert({
+    cycle_id: cycle.id, date, amount_concedido: amount, motivo: val('v-desc')
+  });
+  await supabase.from('fund_ledger').insert({
+    cycle_id: cycle.id, date, type:'despesa', source:'interna', amount, description:`Crédito concedido: ${val('v-desc')}`, auto_gerado:true
+  });
+  closeModal(); await refresh();
+}
+
+async function submitCreditoUsar(){
+  const amount = num('v-amount'); if(!amount) return;
+  const date = getDate();
+  const { data: creditos } = await supabase.from('v_credito_saldo').select('*').gt('saldo_disponivel', 0).order('credito_id');
+  if(!creditos || !creditos.length) return alert('Sem crédito disponível');
+  await supabase.from('credito_uso').insert({
+    credito_id: creditos[0].credito_id, date, amount, description: val('v-desc')
+  });
+  closeModal(); await refresh();
+}
+
+async function submitPrevidencia(){
+  const amount = num('v-amount'); if(!amount) return;
+  const type = val('v-type');
+  const motivo = val('v-desc');
+  const date = getDate();
+  const cycle = await getCycleForDate(date);
+  if(type==='resgate'){
+    if(!motivo) return alert('Motivo é obrigatório para resgate');
+    if(!confirm(`Confirma o resgate de ${money(amount)} da previdência?\nMotivo: ${motivo}`)) return;
+    if(!confirm('Tem certeza? Esse valor é para reserva pessoal, não é recomendado resgatar sem motivo digno.')) return;
+  }
+  await supabase.from('previdencia').insert({
+    date, type, amount, motivo, status:'confirmado', confirmado_em: new Date().toISOString()
+  });
+  if(type==='deposito'){
+    await supabase.from('personal_ledger').insert({
+      cycle_id: cycle.id, date, type:'saida', amount, category:'previdencia_deposito', description: motivo, auto_gerado:true
+    });
+  } else {
+    await supabase.from('personal_ledger').insert({
+      cycle_id: cycle.id, date, type:'entrada', amount, category:'previdencia_resgate', description: motivo, auto_gerado:true
+    });
+  }
+  closeModal(); await refresh();
+}
+
+async function submitEspecie(kind){
+  const amount = num('v-amount'); if(!amount) return;
+  const date = getDate();
+  const cycle = await getCycleForDate(date);
+  const table = kind==='especie_fundo' ? 'fund_cash_ledger' : 'personal_cash_ledger';
+  await supabase.from(table).insert({
+    cycle_id: cycle.id, date, type: val('v-type'), amount, description: val('v-desc')
+  });
+  closeModal(); await refresh();
+}
+
+async function submitReceber(){
+  const amount = num('v-amount'); if(!amount) return;
+  const date = getDate();
+  await supabase.from('receivables').insert({
+    date, amount, description: val('v-desc'), destino: val('v-owner')
+  });
+  closeModal(); alert('Registrado em valores a receber.');
+}
+
+init();
+
+// PWA install
+if('serviceWorker' in navigator){
+  window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(()=>{}));
+}
+</script>
+</body>
+</html>
