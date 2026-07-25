@@ -42,7 +42,10 @@
       <h1 class="text-lg font-bold">JMControl</h1>
       <p id="cycle-label" class="text-xs text-slate-400"></p>
     </div>
-    <button onclick="openSectorList('receber')" class="text-xs text-slate-400 underline">A receber</button>
+    <button onclick="openSectorList('receber')" class="text-xs text-right">
+      <span class="block text-slate-400 underline">A receber</span>
+      <span id="s-receber-total" class="block text-amber-400 font-semibold">R$ 0,00</span>
+    </button>
   </header>
 
   <main class="p-4 space-y-4 max-w-md mx-auto">
@@ -238,6 +241,9 @@ async function refresh(){
     sb.from('credito').select('*'),
     sb.from('credito_uso').select('*'),
   ]);
+  const { data: receberPend } = await sb.from('receivables').select('amount').eq('recebido', false);
+  const totalReceber = (receberPend||[]).reduce((s,x)=>s+x.amount,0);
+  document.getElementById('s-receber-total').textContent = money(totalReceber);
 
   const saldoPessoal = (pl||[]).reduce((s,x)=> s + (x.type==='entrada'? x.amount : -x.amount), 0);
   const saldoFundo = (fl||[]).reduce((s,x)=> s + (x.type==='faturamento'? x.amount : -x.amount), 0);
