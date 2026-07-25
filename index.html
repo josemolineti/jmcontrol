@@ -878,6 +878,7 @@ async function openSectorList(kind){
           <p>Fundo: <span class="text-amber-300">${money(totalFundo)}</span></p>
         </div>
       </div>
+      ${abertos.length ? `<button class="btn bg-fuchsia-700 w-full mb-3" onclick="openFecharFatura(${totalPessoal}, ${totalFundo})">Fechar fatura do mês</button>` : ''}
       <p class="text-xs text-slate-400 mb-1">Em aberto</p>` +
       (abertos.map(row).join('') || '<p class="text-sm text-slate-500 mb-3">Nenhuma em aberto.</p>') +
       `<p class="text-xs text-slate-400 mt-3 mb-1">Fechadas (últimas)</p>` +
@@ -1252,6 +1253,62 @@ async function submitCarenciaPagamento(produtoId, amount, saldoAntes, saldoDepoi
   }
 
   await refresh();
+}
+
+// ---------------- FECHAMENTO DA FATURA ----------------
+
+function openFecharFatura(totalPessoal, totalFundo){
+  const total = totalPessoal + totalFundo;
+  const body = document.getElementById('modal-body');
+  body.innerHTML = `
+    <h2 class="font-bold mb-3">Fechar fatura do mês</h2>
+    <p class="text-xs text-slate-400 mb-3">Marca todos os itens em aberto como fechados, desconta a parte pessoal do seu saldo e lança o valor total como despesa do fundo (a fatura sai do fundo, e a parte pessoal é descontada do seu salário).</p>
+    <div class="card mb-3">
+      <div class="grid grid-cols-2 gap-y-1 text-sm">
+        <p class="text-slate-400">Total da fatura</p><p class="text-right font-semibold">${money(total)}</p>
+        <p class="text-slate-400">Parte pessoal</p><p class="text-right text-amber-400">${money(totalPessoal)}</p>
+        <p class="text-slate-400">Parte fundo</p><p class="text-right text-amber-400">${money(totalFundo)}</p>
+      </div>
+    </div>
+    ${dateField()}
+    <button class="btn bg-fuchsia-600 w-full" onclick="confirmFecharFatura(${totalPessoal}, ${totalFundo})">Confirmar fechamento</button>
+  `;
+  document.getElementById('modal-backdrop').classList.remove('hidden');
+}
+
+async function confirmFecharFatura(totalPessoal, totalFundo){
+  const total = totalPessoal + totalFundo;
+  const date = getDate();
+
+  const saldoFundo = await getSaldoFundoDigital();
+  if(!(await confirmOverdraft(saldoFundo, total, 'o saldo do fundo'))) return;
+
+  if(totalPessoal > 0){
+    const saldoPessoal = await getSaldoPessoalDigital();
+    if(!(await confirmOverdraft(saldoPessoal, totalPessoal, 'seu saldo pessoal'))) return;
+  }
+
+  const cycle = await getCycleForDate(date);
+
+  const { data: abertos } = await sb.from('fatura_items').select('id').eq('fechado', false);
+  const ids = (abertos||[]).map(x=>x.id);
+  if(ids.length){
+    await sb.from('fatura_items').update({ fechado:true, settled_cycle_id: cycle.id }).in('id', ids);
+  }
+
+  const { data: fundTx } = await sb.from('fund_ledger').insert({
+    cycle_id: cycle.id, date, type:'despesa', source:'externa', amount: total,
+    description: `Fechamento da fatura do cartão`, auto_gerado:true
+  }).select().single();
+
+  if(totalPessoal > 0){
+    await sb.from('personal_ledger').insert({
+      cycle_id: cycle.id, date, type:'saida', amount: totalPessoal, category:'fatura_pessoal',
+      description: `Fechamento da fatura - parte pessoal`, auto_gerado:true, origem_id: fundTx.id
+    });
+  }
+
+  closeModal(); await refresh();
 }
 
 init().catch(e => showFatalError(e.message || String(e)));
