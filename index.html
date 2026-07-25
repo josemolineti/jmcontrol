@@ -49,7 +49,7 @@
 
     <section class="grid grid-cols-2 gap-3">
       <div class="card cursor-pointer" onclick="openSectorList('pessoal')"><p class="text-xs text-slate-400">Saldo pessoal (ciclo)</p><p id="s-pessoal" class="text-2xl font-bold text-emerald-400">R$ 0,00</p></div>
-      <div class="card cursor-pointer" onclick="openSectorList('fundo')"><p class="text-xs text-slate-400">Fundo (total)</p><p id="s-fundo" class="text-2xl font-bold text-sky-400">R$ 0,00</p></div>
+      <div class="card cursor-pointer" onclick="openSectorList('fundo')"><p class="text-xs text-slate-400">Fundo (total, com previdência)</p><p id="s-fundo" class="text-2xl font-bold text-sky-400">R$ 0,00</p><p id="s-fundo-breakdown" class="text-[10px] text-slate-500 mt-1"></p></div>
       <div class="card cursor-pointer" onclick="openSectorList('vale')"><p class="text-xs text-slate-400">Vale disponível</p><p id="s-vale" class="text-lg font-semibold">R$ 0,00</p></div>
       <div class="card cursor-pointer" onclick="openSectorList('credito')"><p class="text-xs text-slate-400">Crédito disponível</p><p id="s-credito" class="text-lg font-semibold">R$ 0,00</p></div>
       <div class="card cursor-pointer" onclick="openSectorList('previdencia')"><p class="text-xs text-slate-400">Previdência</p><p id="s-prev" class="text-lg font-semibold">R$ 0,00</p></div>
@@ -82,6 +82,7 @@
         <button class="btn bg-rose-900" onclick="openModal('despesa_fundo')">Despesa do fundo</button>
         <button class="btn bg-sky-800" onclick="openModal('faturamento_fundo')">Faturamento do fundo</button>
         <button class="btn bg-indigo-700 col-span-2" onclick="openModal('resgate_fundo')">Usar $ do fundo pra mim</button>
+        <button class="btn bg-teal-700 col-span-2" onclick="openModal('guardar_fundo')">Descontar de mim e guardar no fundo</button>
         <button class="btn bg-fuchsia-800 col-span-2" onclick="openModal('cartao')">Compra no cartão</button>
         <button class="btn bg-lime-800" onclick="openModal('vale')">Vale alimentação</button>
         <button class="btn bg-yellow-800" onclick="openModal('credito')">Crédito</button>
@@ -216,8 +217,8 @@ async function refresh(){
     sb.from('personal_ledger').select('*').eq('cycle_id', cid),
     sb.from('fund_ledger').select('*'),
     sb.from('fund_ledger').select('*').eq('cycle_id', cid),
-    sb.from('vale_ledger').select('*').eq('cycle_id', cid),
-    sb.from('v_credito_saldo').select('*').eq('cycle_id', cid),
+    sb.from('vale_ledger').select('*'),
+    sb.from('v_credito_saldo').select('*'),
     sb.from('previdencia').select('*'),
     sb.from('fatura_items').select('*').eq('fechado', false),
     sb.from('fund_cash_ledger').select('*'),
@@ -241,7 +242,8 @@ async function refresh(){
   const funOut = (flCiclo||[]).filter(x=>x.type==='despesa').reduce((s,x)=>s+x.amount,0);
 
   document.getElementById('s-pessoal').textContent = money(saldoPessoal);
-  document.getElementById('s-fundo').textContent = money(saldoFundo);
+  document.getElementById('s-fundo').textContent = money(saldoFundo + saldoPrev);
+  document.getElementById('s-fundo-breakdown').textContent = `Fundo: ${money(saldoFundo)} · Previdência: ${money(saldoPrev)}`;
   document.getElementById('s-vale').textContent = money(saldoVale);
   document.getElementById('s-credito').textContent = money(saldoCredito);
   document.getElementById('s-prev').textContent = money(saldoPrev);
@@ -292,6 +294,12 @@ async function resolverPendencia(id, amount, desc){
   await refresh();
 }
 
+const ORIGEM_COLOR = {
+  'Pessoal': 'border-emerald-500',
+  'Fundo': 'border-sky-500',
+  'Vale': 'border-lime-500',
+};
+
 function renderTimeline(pl, fl, vl){
   const items = [
     ...(pl||[]).map(x=>({...x, origem:'Pessoal'})),
@@ -300,7 +308,7 @@ function renderTimeline(pl, fl, vl){
   ].sort((a,b)=> new Date(b.created_at) - new Date(a.created_at)).slice(0,15);
 
   document.getElementById('timeline').innerHTML = items.map(i => `
-    <div class="card flex justify-between items-center py-2">
+    <div class="card flex justify-between items-center py-2 border-l-4 ${ORIGEM_COLOR[i.origem] || 'border-slate-600'}">
       <div>
         <p class="text-sm">${i.description || '(sem descrição)'}</p>
         <p class="text-xs text-slate-500">${i.origem} · ${i.category || i.source || i.type}</p>
@@ -352,6 +360,14 @@ function openModal(kind){
       ${field('Motivo','v-desc','text')}
       <label class="flex items-center gap-2 mb-3 text-sm"><input type="checkbox" id="v-diferir"> Descontar só no próximo acerto (vira pendência/lembrete)</label>
       <button class="btn bg-indigo-600 w-full" onclick="submitResgate()">Salvar</button>`;
+  }
+  else if(kind==='guardar_fundo'){
+    html = `<h2 class="font-bold mb-3">Descontar de mim e guardar no fundo</h2>
+      <p class="text-xs text-slate-400 mb-3">Desconta do seu saldo pessoal e credita como faturamento (movimentação interna) no fundo. É o oposto de "Usar $ do fundo pra mim".</p>
+      ${dateField()}
+      ${field('Valor (R$)','v-amount')}
+      ${field('Motivo','v-desc','text')}
+      <button class="btn bg-teal-600 w-full" onclick="submitGuardarFundo()">Salvar</button>`;
   }
   else if(kind==='cartao'){
     html = `<h2 class="font-bold mb-3">Compra no cartão</h2>
@@ -480,6 +496,21 @@ async function submitResgate(){
       date, amount, description: desc, origem: 'resgate_fundo'
     });
   }
+  closeModal(); await refresh();
+}
+
+async function submitGuardarFundo(){
+  const amount = num('v-amount'); if(!amount) return;
+  const desc = val('v-desc');
+  const date = getDate();
+  const cycle = await getCycleForDate(date);
+  const { data: fundTx } = await sb.from('fund_ledger').insert({
+    cycle_id: cycle.id, date, type:'faturamento', source:'interna', amount, description: desc, auto_gerado:true
+  }).select().single();
+  await sb.from('personal_ledger').insert({
+    cycle_id: cycle.id, date, type:'saida', amount, category:'guardar_fundo',
+    description: desc, auto_gerado:true, origem_id: fundTx.id
+  });
   closeModal(); await refresh();
 }
 
@@ -647,8 +678,8 @@ async function openSectorList(kind){
     html = (data||[]).map(x => listRow(x.date, x.description, `${x.source} · ${x.type}`, x.amount, x.type==='faturamento')).join('') || '<p class="text-sm text-slate-500">Nada ainda.</p>';
   }
   else if(kind==='vale'){
-    title = 'Extrato do vale (ciclo atual)';
-    const { data } = await sb.from('vale_ledger').select('*').eq('cycle_id', currentCycle.id).order('date', {ascending:false});
+    title = 'Extrato do vale (saldo contínuo)';
+    const { data } = await sb.from('vale_ledger').select('*').order('date', {ascending:false}).limit(100);
     html = (data||[]).map(x => listRow(x.date, x.description, x.uso_pessoal ? 'uso pessoal' : 'fundo', x.amount, x.type==='entrada')).join('') || '<p class="text-sm text-slate-500">Nada ainda.</p>';
   }
   else if(kind==='credito'){
