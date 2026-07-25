@@ -484,8 +484,50 @@ function closeModal(){
 function val(id){ return document.getElementById(id).value; }
 function num(id){ return parseFloat(document.getElementById(id).value.replace(',','.')) || 0; }
 
+// ---------------- VALIDAÇÕES DE SALDO ----------------
+
+async function getSaldoPessoalDigital(){
+  const { data } = await sb.from('personal_ledger').select('type,amount').eq('cycle_id', currentCycle.id);
+  return (data||[]).reduce((s,x)=> s + (x.type==='entrada'? x.amount : -x.amount), 0);
+}
+
+async function getSaldoFundoDigital(){
+  const { data } = await sb.from('fund_ledger').select('type,amount');
+  return (data||[]).reduce((s,x)=> s + (x.type==='faturamento'? x.amount : -x.amount), 0);
+}
+
+async function getSaldoEspecie(table){
+  const { data } = await sb.from(table).select('type,amount');
+  return (data||[]).reduce((s,x)=> s + (x.type==='entrada'? x.amount : -x.amount), 0);
+}
+
+async function getSaldoVale(){
+  const { data } = await sb.from('vale_ledger').select('type,amount');
+  return (data||[]).reduce((s,x)=> s + (x.type==='entrada'? x.amount : -x.amount), 0);
+}
+
+// Aviso (não bloqueia) — usado onde negativo é uma situação real e aceitável (ex: cheque especial)
+async function confirmOverdraft(saldoAtual, amount, label){
+  if(amount <= saldoAtual) return true;
+  const faltante = amount - saldoAtual;
+  return confirm(`Isso vai deixar ${label} negativo em ${money(faltante)} (saldo atual: ${money(saldoAtual)}). Confirma mesmo assim?`);
+}
+
+// Bloqueio de verdade — usado onde negativo não faz sentido (espécie, vale, crédito)
+function blockIfExceeds(saldoAtual, amount, label){
+  if(amount > saldoAtual + 0.009){
+    alert(`Valor maior do que o disponível em ${label} (${money(saldoAtual)}). Ajuste o valor.`);
+    return false;
+  }
+  return true;
+}
+
 async function submitPersonal(type){
   const amount = num('v-amount'); if(!amount) return;
+  if(type==='saida'){
+    const saldo = await getSaldoPessoalDigital();
+    if(!(await confirmOverdraft(saldo, amount, 'seu saldo pessoal'))) return;
+  }
   const date = getDate();
   const cycle = await getCycleForDate(date);
   await sb.from('personal_ledger').insert({
@@ -496,6 +538,10 @@ async function submitPersonal(type){
 
 async function submitFund(type, source){
   const amount = num('v-amount'); if(!amount) return;
+  if(type==='despesa'){
+    const saldo = await getSaldoFundoDigital();
+    if(!(await confirmOverdraft(saldo, amount, 'o saldo do fundo'))) return;
+  }
   const date = getDate();
   const cycle = await getCycleForDate(date);
   await sb.from('fund_ledger').insert({
@@ -527,6 +573,8 @@ async function submitResgate(){
 
 async function submitGuardarFundo(){
   const amount = num('v-amount'); if(!amount) return;
+  const saldo = await getSaldoPessoalDigital();
+  if(!(await confirmOverdraft(saldo, amount, 'seu saldo pessoal'))) return;
   const desc = val('v-desc');
   const date = getDate();
   const cycle = await getCycleForDate(date);
@@ -553,8 +601,16 @@ async function submitCartao(){
 async function submitVale(){
   const amount = num('v-amount'); if(!amount) return;
   const type = val('v-type');
+  if(type==='saida'){
+    const saldo = await getSaldoVale();
+    if(!blockIfExceeds(saldo, amount, 'vale')) return;
+  }
   const usoPessoal = document.getElementById('v-pessoal').checked;
   const desc = val('v-desc');
+  if(type==='saida' && usoPessoal){
+    const saldoPessoal = await getSaldoPessoalDigital();
+    if(!(await confirmOverdraft(saldoPessoal, amount, 'seu saldo pessoal'))) return;
+  }
   const date = getDate();
   const cycle = await getCycleForDate(date);
   await sb.from('vale_ledger').insert({
@@ -606,6 +662,8 @@ async function submitCreditoUsar(){
   const date = getDate();
   const { data: creditos } = await sb.from('v_credito_saldo').select('*').gt('saldo_disponivel', 0).order('credito_id');
   if(!creditos || !creditos.length) return alert('Sem crédito disponível');
+  const disponivel = creditos.reduce((s,c)=>s+c.saldo_disponivel, 0);
+  if(!blockIfExceeds(disponivel, amount, 'crédito')) return;
   await sb.from('credito_uso').insert({
     credito_id: creditos[0].credito_id, date, amount, description: val('v-desc')
   });
@@ -643,23 +701,31 @@ async function submitEspecie(kind){
   const date = getDate();
   const desc = val('v-desc');
   const type = val('v-type');
-  const cycle = await getCycleForDate(date);
   const table = kind==='especie_fundo' ? 'fund_cash_ledger' : 'personal_cash_ledger';
+  const usoPessoal = kind==='especie_fundo' && type==='saida' && document.getElementById('v-pessoal') && document.getElementById('v-pessoal').checked;
+
+  if(type==='saida'){
+    const saldoEspecie = await getSaldoEspecie(table);
+    if(!blockIfExceeds(saldoEspecie, amount, kind==='especie_fundo' ? 'espécie do fundo' : 'espécie pessoal')) return;
+  }
+  if(usoPessoal){
+    const saldoPessoal = await getSaldoPessoalDigital();
+    if(!(await confirmOverdraft(saldoPessoal, amount, 'seu saldo pessoal'))) return;
+  }
+
+  const cycle = await getCycleForDate(date);
   await sb.from(table).insert({
     cycle_id: cycle.id, date, type, amount, description: desc
   });
 
-  if(kind==='especie_fundo' && type==='saida'){
-    const usoPessoal = document.getElementById('v-pessoal') && document.getElementById('v-pessoal').checked;
-    if(usoPessoal){
-      const { data: fundTx } = await sb.from('fund_ledger').insert({
-        cycle_id: cycle.id, date, type:'faturamento', source:'interna', amount, description:`Espécie do fundo p/ uso pessoal (haver): ${desc}`, auto_gerado:true
-      }).select().single();
-      await sb.from('personal_ledger').insert({
-        cycle_id: cycle.id, date, type:'saida', amount, category:'especie_fundo_pessoal',
-        description: desc, auto_gerado:true, origem_id: fundTx.id
-      });
-    }
+  if(usoPessoal){
+    const { data: fundTx } = await sb.from('fund_ledger').insert({
+      cycle_id: cycle.id, date, type:'faturamento', source:'interna', amount, description:`Espécie do fundo p/ uso pessoal (haver): ${desc}`, auto_gerado:true
+    }).select().single();
+    await sb.from('personal_ledger').insert({
+      cycle_id: cycle.id, date, type:'saida', amount, category:'especie_fundo_pessoal',
+      description: desc, auto_gerado:true, origem_id: fundTx.id
+    });
   }
 
   closeModal(); await refresh();
@@ -953,9 +1019,20 @@ async function submitParcela(emprestimoId){
   const amount = num('v-amount'); if(!amount) return;
   const date = getDate();
   const semMovimento = document.getElementById('v-sem-mov').checked;
-  const cycle = await getCycleForDate(date);
   const { data: e } = await sb.from('emprestimos').select('*').eq('id', emprestimoId).single();
-  const { data: parcAntes } = await sb.from('emprestimo_parcelas').select('id').eq('emprestimo_id', emprestimoId);
+  const { data: parcAntes } = await sb.from('emprestimo_parcelas').select('amount').eq('emprestimo_id', emprestimoId);
+  const abatidoAntes = (parcAntes||[]).reduce((s,p)=>s+p.amount,0);
+  const c = calcEmprestimo(e.valor_emprestado, e.taxa_juros, e.meses);
+  const aPagarAntes = c.total - abatidoAntes;
+  if(amount > aPagarAntes + 0.009){
+    if(!confirm(`Esse valor é ${money(amount - aPagarAntes)} a mais do que falta pagar (${money(aPagarAntes)}). Confirma o pagamento a maior?`)) return;
+  }
+  if(!semMovimento && e.interno){
+    const saldoPessoal = await getSaldoPessoalDigital();
+    if(!(await confirmOverdraft(saldoPessoal, amount, 'seu saldo pessoal'))) return;
+  }
+
+  const cycle = await getCycleForDate(date);
   const parcelaNumero = (parcAntes ? parcAntes.length : 0) + 1;
   const idEmprestimo = e.serial || e.nome;
   const desc = `Recolhimento da parcela ${parcelaNumero}/${e.meses} do empréstimo ${idEmprestimo}`;
@@ -1132,7 +1209,18 @@ async function openCarenciaPagarProduto(id, aPagar){
 
 async function confirmCarenciaProdutoPagamento(produtoId){
   const amount = num('v-amount'); if(!amount) return;
-  const date = getDate();
+
+  const { data: p } = await sb.from('carencia_produtos').select('valor').eq('id', produtoId).single();
+  const { data: pagos } = await sb.from('carencia_pagamentos').select('amount').eq('produto_id', produtoId);
+  const jaPago = (pagos||[]).reduce((s,x)=>s+x.amount,0);
+  const aPagar = p.valor - jaPago;
+  if(amount > aPagar + 0.009){
+    if(!confirm(`Esse valor é ${money(amount - aPagar)} a mais do que falta pagar (${money(aPagar)}). Confirma o pagamento a maior?`)) return;
+  }
+
+  const saldoPessoal = await getSaldoPessoalDigital();
+  if(!(await confirmOverdraft(saldoPessoal, amount, 'seu saldo pessoal'))) return;
+
   await submitCarenciaPagamento(produtoId, amount, null, null);
   await openCarenciaDetail(produtoId);
 }
