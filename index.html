@@ -48,14 +48,30 @@
   <main class="p-4 space-y-4 max-w-md mx-auto">
 
     <section class="grid grid-cols-2 gap-3">
-      <div class="card"><p class="text-xs text-slate-400">Saldo pessoal (ciclo)</p><p id="s-pessoal" class="text-2xl font-bold text-emerald-400">R$ 0,00</p></div>
-      <div class="card"><p class="text-xs text-slate-400">Fundo (total)</p><p id="s-fundo" class="text-2xl font-bold text-sky-400">R$ 0,00</p></div>
-      <div class="card"><p class="text-xs text-slate-400">Vale disponível</p><p id="s-vale" class="text-lg font-semibold">R$ 0,00</p></div>
-      <div class="card"><p class="text-xs text-slate-400">Crédito disponível</p><p id="s-credito" class="text-lg font-semibold">R$ 0,00</p></div>
-      <div class="card"><p class="text-xs text-slate-400">Previdência</p><p id="s-prev" class="text-lg font-semibold">R$ 0,00</p></div>
-      <div class="card"><p class="text-xs text-slate-400">Fatura aberta (pessoal)</p><p id="s-fatura-p" class="text-lg font-semibold text-amber-400">R$ 0,00</p></div>
-      <div class="card"><p class="text-xs text-slate-400">Fatura aberta (fundo)</p><p id="s-fatura-f" class="text-lg font-semibold text-amber-400">R$ 0,00</p></div>
-      <div class="card"><p class="text-xs text-slate-400">Espécie (fundo / pessoal)</p><p id="s-especie" class="text-lg font-semibold">R$0 / R$0</p></div>
+      <div class="card cursor-pointer" onclick="openSectorList('pessoal')"><p class="text-xs text-slate-400">Saldo pessoal (ciclo)</p><p id="s-pessoal" class="text-2xl font-bold text-emerald-400">R$ 0,00</p></div>
+      <div class="card cursor-pointer" onclick="openSectorList('fundo')"><p class="text-xs text-slate-400">Fundo (total)</p><p id="s-fundo" class="text-2xl font-bold text-sky-400">R$ 0,00</p></div>
+      <div class="card cursor-pointer" onclick="openSectorList('vale')"><p class="text-xs text-slate-400">Vale disponível</p><p id="s-vale" class="text-lg font-semibold">R$ 0,00</p></div>
+      <div class="card cursor-pointer" onclick="openSectorList('credito')"><p class="text-xs text-slate-400">Crédito disponível</p><p id="s-credito" class="text-lg font-semibold">R$ 0,00</p></div>
+      <div class="card cursor-pointer" onclick="openSectorList('previdencia')"><p class="text-xs text-slate-400">Previdência</p><p id="s-prev" class="text-lg font-semibold">R$ 0,00</p></div>
+      <div class="card cursor-pointer" onclick="openSectorList('fatura')"><p class="text-xs text-slate-400">Fatura aberta (pessoal)</p><p id="s-fatura-p" class="text-lg font-semibold text-amber-400">R$ 0,00</p></div>
+      <div class="card cursor-pointer" onclick="openSectorList('fatura')"><p class="text-xs text-slate-400">Fatura aberta (fundo)</p><p id="s-fatura-f" class="text-lg font-semibold text-amber-400">R$ 0,00</p></div>
+      <div class="card cursor-pointer" onclick="openSectorList('especie')"><p class="text-xs text-slate-400">Espécie (fundo / pessoal)</p><p id="s-especie" class="text-lg font-semibold">R$0 / R$0</p></div>
+    </section>
+
+    <section id="pendencias-section" class="hidden">
+      <p class="text-sm text-amber-400 mb-2">⚠ Pendências (descontar no próximo acerto)</p>
+      <div id="pendencias-list" class="space-y-2"></div>
+    </section>
+
+    <section class="card">
+      <p class="text-sm text-slate-400 mb-3">Resumo do ciclo</p>
+      <div class="grid grid-cols-2 gap-y-2 text-sm">
+        <p class="text-slate-400">Entradas pessoal</p><p class="text-right text-emerald-400" id="t-pes-in">R$ 0,00</p>
+        <p class="text-slate-400">Saídas pessoal</p><p class="text-right text-rose-400" id="t-pes-out">R$ 0,00</p>
+        <p class="text-slate-400">Faturamento fundo</p><p class="text-right text-emerald-400" id="t-fun-in">R$ 0,00</p>
+        <p class="text-slate-400">Despesas fundo</p><p class="text-right text-rose-400" id="t-fun-out">R$ 0,00</p>
+        <p class="text-slate-300 font-semibold">Diferença fundo (lucro)</p><p class="text-right font-semibold" id="t-fun-diff">R$ 0,00</p>
+      </div>
     </section>
 
     <section>
@@ -196,15 +212,17 @@ async function ensureCycle(){
 async function refresh(){
   const cid = currentCycle.id;
 
-  const [{data:pl},{data:fl},{data:vl},{data:cr},{data:pv},{data:fa},{data:efundo},{data:epes}] = await Promise.all([
+  const [{data:pl},{data:fl},{data:flCiclo},{data:vl},{data:cr},{data:pv},{data:fa},{data:efundo},{data:epes},{data:pend}] = await Promise.all([
     sb.from('personal_ledger').select('*').eq('cycle_id', cid),
     sb.from('fund_ledger').select('*'),
+    sb.from('fund_ledger').select('*').eq('cycle_id', cid),
     sb.from('vale_ledger').select('*').eq('cycle_id', cid),
     sb.from('v_credito_saldo').select('*').eq('cycle_id', cid),
     sb.from('previdencia').select('*'),
     sb.from('fatura_items').select('*').eq('fechado', false),
     sb.from('fund_cash_ledger').select('*'),
     sb.from('personal_cash_ledger').select('*'),
+    sb.from('pendencias').select('*').eq('resolvido', false).order('date'),
   ]);
 
   const saldoPessoal = (pl||[]).reduce((s,x)=> s + (x.type==='entrada'? x.amount : -x.amount), 0);
@@ -217,6 +235,11 @@ async function refresh(){
   const especieFundo = (efundo||[]).reduce((s,x)=> s + (x.type==='entrada'? x.amount : -x.amount), 0);
   const especiePessoal = (epes||[]).reduce((s,x)=> s + (x.type==='entrada'? x.amount : -x.amount), 0);
 
+  const pesIn = (pl||[]).filter(x=>x.type==='entrada').reduce((s,x)=>s+x.amount,0);
+  const pesOut = (pl||[]).filter(x=>x.type==='saida').reduce((s,x)=>s+x.amount,0);
+  const funIn = (flCiclo||[]).filter(x=>x.type==='faturamento').reduce((s,x)=>s+x.amount,0);
+  const funOut = (flCiclo||[]).filter(x=>x.type==='despesa').reduce((s,x)=>s+x.amount,0);
+
   document.getElementById('s-pessoal').textContent = money(saldoPessoal);
   document.getElementById('s-fundo').textContent = money(saldoFundo);
   document.getElementById('s-vale').textContent = money(saldoVale);
@@ -226,7 +249,47 @@ async function refresh(){
   document.getElementById('s-fatura-f').textContent = money(faturaFundo);
   document.getElementById('s-especie').textContent = `${money(especieFundo)} / ${money(especiePessoal)}`;
 
+  document.getElementById('t-pes-in').textContent = money(pesIn);
+  document.getElementById('t-pes-out').textContent = money(pesOut);
+  document.getElementById('t-fun-in').textContent = money(funIn);
+  document.getElementById('t-fun-out').textContent = money(funOut);
+  const diff = funIn - funOut;
+  const diffEl = document.getElementById('t-fun-diff');
+  diffEl.textContent = money(diff);
+  diffEl.className = 'text-right font-semibold ' + (diff >= 0 ? 'text-emerald-400' : 'text-rose-400');
+
+  renderPendencias(pend);
   renderTimeline(pl, fl, vl);
+}
+
+function renderPendencias(pend){
+  const section = document.getElementById('pendencias-section');
+  const list = document.getElementById('pendencias-list');
+  if(!pend || !pend.length){ section.classList.add('hidden'); return; }
+  section.classList.remove('hidden');
+  list.innerHTML = pend.map(p => `
+    <div class="card flex justify-between items-center py-2 border border-amber-700">
+      <div>
+        <p class="text-sm">${p.description || '(sem descrição)'}</p>
+        <p class="text-xs text-slate-500">${new Date(p.date).toLocaleDateString('pt-BR')} · a descontar do salário</p>
+      </div>
+      <div class="text-right">
+        <p class="font-semibold text-amber-400 mb-1">${money(p.amount)}</p>
+        <button class="text-xs bg-amber-700 rounded px-2 py-1" onclick="resolverPendencia('${p.id}', ${p.amount}, '${(p.description||'').replace(/'/g,"\\'")}')">Descontar agora</button>
+      </div>
+    </div>
+  `).join('');
+}
+
+async function resolverPendencia(id, amount, desc){
+  if(!confirm(`Descontar ${money(amount)} do seu saldo pessoal agora, referente a: ${desc}?`)) return;
+  const date = todayStr();
+  const cycle = await getCycleForDate(date);
+  await sb.from('personal_ledger').insert({
+    cycle_id: cycle.id, date, type:'saida', amount, category:'pendencia_resolvida', description: desc, auto_gerado:true
+  });
+  await sb.from('pendencias').update({ resolvido:true, resolvido_em: date }).eq('id', id);
+  await refresh();
 }
 
 function renderTimeline(pl, fl, vl){
@@ -287,6 +350,7 @@ function openModal(kind){
       ${dateField()}
       ${field('Valor (R$)','v-amount')}
       ${field('Motivo','v-desc','text')}
+      <label class="flex items-center gap-2 mb-3 text-sm"><input type="checkbox" id="v-diferir"> Descontar só no próximo acerto (vira pendência/lembrete)</label>
       <button class="btn bg-indigo-600 w-full" onclick="submitResgate()">Salvar</button>`;
   }
   else if(kind==='cartao'){
@@ -340,10 +404,11 @@ function openModal(kind){
       ${field('Valor (R$)','v-amount')}
       ${field('Descrição','v-desc','text')}
       <label class="text-xs text-slate-400">Tipo</label>
-      <select id="v-type" class="w-full mb-3 p-3 rounded-lg bg-slate-800 border border-slate-700">
+      <select id="v-type" class="w-full mb-3 p-3 rounded-lg bg-slate-800 border border-slate-700" ${kind==='especie_fundo' ? 'onchange="toggleEspeciePessoalCheckbox()"' : ''}>
         <option value="saida">Saída</option>
         <option value="entrada">Entrada</option>
       </select>
+      ${kind==='especie_fundo' ? `<div id="especie-pessoal-wrap"><label class="flex items-center gap-2 mb-3 text-sm"><input type="checkbox" id="v-pessoal"> Peguei essa nota pra uso pessoal (desconta do meu saldo, credita o fundo)</label></div>` : ''}
       <button class="btn bg-slate-600 w-full" onclick="submitEspecie('${kind}')">Salvar</button>`;
   }
   else if(kind==='receber'){
@@ -361,6 +426,13 @@ function openModal(kind){
 
   body.innerHTML = html;
   document.getElementById('modal-backdrop').classList.remove('hidden');
+}
+
+function toggleEspeciePessoalCheckbox(){
+  const wrap = document.getElementById('especie-pessoal-wrap');
+  if(!wrap) return;
+  wrap.style.display = val('v-type')==='saida' ? 'block' : 'none';
+  if(val('v-type')!=='saida') document.getElementById('v-pessoal').checked = false;
 }
 
 function closeModal(){
@@ -394,6 +466,7 @@ async function submitResgate(){
   const amount = num('v-amount'); if(!amount) return;
   const desc = val('v-desc');
   const date = getDate();
+  const diferir = document.getElementById('v-diferir').checked;
   const cycle = await getCycleForDate(date);
   const { data: fundTx } = await sb.from('fund_ledger').insert({
     cycle_id: cycle.id, date, type:'despesa', source:'interna', amount, description: desc, auto_gerado:true
@@ -402,6 +475,11 @@ async function submitResgate(){
     cycle_id: cycle.id, date, type:'entrada', amount, category:'resgate_fundo',
     description: desc, auto_gerado:true, origem_id: fundTx.id
   });
+  if(diferir){
+    await sb.from('pendencias').insert({
+      date, amount, description: desc, origem: 'resgate_fundo'
+    });
+  }
   closeModal(); await refresh();
 }
 
@@ -427,10 +505,10 @@ async function submitVale(){
   });
   if(type==='saida' && usoPessoal){
     const { data: fundTx } = await sb.from('fund_ledger').insert({
-      cycle_id: cycle.id, date, type:'faturamento', source:'interna', amount, description:`Vale uso pessoal: ${desc}`, auto_gerado:true
+      cycle_id: cycle.id, date, type:'faturamento', source:'interna', amount, description:`Vale uso pessoal (haver do fundo): ${desc}`, auto_gerado:true
     }).select().single();
     await sb.from('personal_ledger').insert({
-      cycle_id: cycle.id, date, type:'entrada', amount, category:'vale_pessoal',
+      cycle_id: cycle.id, date, type:'saida', amount, category:'vale_pessoal',
       description: desc, auto_gerado:true, origem_id: fundTx.id
     });
   }
@@ -506,11 +584,27 @@ async function submitPrevidencia(){
 async function submitEspecie(kind){
   const amount = num('v-amount'); if(!amount) return;
   const date = getDate();
+  const desc = val('v-desc');
+  const type = val('v-type');
   const cycle = await getCycleForDate(date);
   const table = kind==='especie_fundo' ? 'fund_cash_ledger' : 'personal_cash_ledger';
   await sb.from(table).insert({
-    cycle_id: cycle.id, date, type: val('v-type'), amount, description: val('v-desc')
+    cycle_id: cycle.id, date, type, amount, description: desc
   });
+
+  if(kind==='especie_fundo' && type==='saida'){
+    const usoPessoal = document.getElementById('v-pessoal') && document.getElementById('v-pessoal').checked;
+    if(usoPessoal){
+      const { data: fundTx } = await sb.from('fund_ledger').insert({
+        cycle_id: cycle.id, date, type:'faturamento', source:'interna', amount, description:`Espécie do fundo p/ uso pessoal (haver): ${desc}`, auto_gerado:true
+      }).select().single();
+      await sb.from('personal_ledger').insert({
+        cycle_id: cycle.id, date, type:'saida', amount, category:'especie_fundo_pessoal',
+        description: desc, auto_gerado:true, origem_id: fundTx.id
+      });
+    }
+  }
+
   closeModal(); await refresh();
 }
 
@@ -521,6 +615,88 @@ async function submitReceber(){
     date, amount, description: val('v-desc'), destino: val('v-owner')
   });
   closeModal(); alert('Registrado em valores a receber.');
+}
+
+// ---------------- EXTRATOS POR SETOR ----------------
+
+function listRow(dateStr, desc, tag, amount, positive){
+  return `<div class="card flex justify-between items-center py-2">
+    <div>
+      <p class="text-sm">${desc || '(sem descrição)'}</p>
+      <p class="text-xs text-slate-500">${new Date(dateStr).toLocaleDateString('pt-BR')} · ${tag}</p>
+    </div>
+    <p class="font-semibold ${positive ? 'text-emerald-400' : 'text-rose-400'}">${positive?'+':'-'}${money(amount)}</p>
+  </div>`;
+}
+
+async function openSectorList(kind){
+  const body = document.getElementById('modal-body');
+  body.innerHTML = `<h2 class="font-bold mb-3">Carregando…</h2>`;
+  document.getElementById('modal-backdrop').classList.remove('hidden');
+
+  let title = '', html = '';
+
+  if(kind==='pessoal'){
+    title = 'Extrato pessoal (ciclo atual)';
+    const { data } = await sb.from('personal_ledger').select('*').eq('cycle_id', currentCycle.id).order('date', {ascending:false});
+    html = (data||[]).map(x => listRow(x.date, x.description, x.category, x.amount, x.type==='entrada')).join('') || '<p class="text-sm text-slate-500">Nada ainda.</p>';
+  }
+  else if(kind==='fundo'){
+    title = 'Extrato do fundo (todos os ciclos)';
+    const { data } = await sb.from('fund_ledger').select('*').order('date', {ascending:false}).limit(100);
+    html = (data||[]).map(x => listRow(x.date, x.description, `${x.source} · ${x.type}`, x.amount, x.type==='faturamento')).join('') || '<p class="text-sm text-slate-500">Nada ainda.</p>';
+  }
+  else if(kind==='vale'){
+    title = 'Extrato do vale (ciclo atual)';
+    const { data } = await sb.from('vale_ledger').select('*').eq('cycle_id', currentCycle.id).order('date', {ascending:false});
+    html = (data||[]).map(x => listRow(x.date, x.description, x.uso_pessoal ? 'uso pessoal' : 'fundo', x.amount, x.type==='entrada')).join('') || '<p class="text-sm text-slate-500">Nada ainda.</p>';
+  }
+  else if(kind==='credito'){
+    title = 'Crédito — concessões e usos';
+    const [{data:conc},{data:usos}] = await Promise.all([
+      sb.from('credito').select('*').order('date',{ascending:false}),
+      sb.from('credito_uso').select('*').order('date',{ascending:false}),
+    ]);
+    html = '<p class="text-xs text-slate-400 mb-1">Concedido</p>' +
+      ((conc||[]).map(x=>listRow(x.date, x.motivo, 'concedido', x.amount_concedido, true)).join('') || '<p class="text-sm text-slate-500 mb-3">Nenhum.</p>') +
+      '<p class="text-xs text-slate-400 mt-3 mb-1">Usado</p>' +
+      ((usos||[]).map(x=>listRow(x.date, x.description, 'uso', x.amount, false)).join('') || '<p class="text-sm text-slate-500">Nenhum uso.</p>');
+  }
+  else if(kind==='previdencia'){
+    title = 'Previdência pessoal';
+    const { data } = await sb.from('previdencia').select('*').order('date', {ascending:false});
+    html = (data||[]).map(x => listRow(x.date, x.motivo, x.type, x.amount, x.type==='deposito')).join('') || '<p class="text-sm text-slate-500">Nada ainda.</p>';
+  }
+  else if(kind==='especie'){
+    title = 'Espécie — fundo e pessoal';
+    const [{data:ef},{data:ep}] = await Promise.all([
+      sb.from('fund_cash_ledger').select('*').order('date',{ascending:false}),
+      sb.from('personal_cash_ledger').select('*').order('date',{ascending:false}),
+    ]);
+    html = '<p class="text-xs text-slate-400 mb-1">Fundo</p>' +
+      ((ef||[]).map(x=>listRow(x.date, x.description, 'espécie fundo', x.amount, x.type==='entrada')).join('') || '<p class="text-sm text-slate-500 mb-3">Nada.</p>') +
+      '<p class="text-xs text-slate-400 mt-3 mb-1">Pessoal</p>' +
+      ((ep||[]).map(x=>listRow(x.date, x.description, 'espécie pessoal', x.amount, x.type==='entrada')).join('') || '<p class="text-sm text-slate-500">Nada.</p>');
+  }
+  else if(kind==='fatura'){
+    title = 'Fatura do cartão';
+    const { data } = await sb.from('fatura_items').select('*').order('date', {ascending:false}).limit(100);
+    const abertos = (data||[]).filter(x=>!x.fechado);
+    const fechados = (data||[]).filter(x=>x.fechado);
+    const row = x => `<div class="card flex justify-between items-center py-2">
+        <div>
+          <p class="text-sm">${x.description || '(sem descrição)'}</p>
+          <p class="text-xs text-slate-500">${new Date(x.date).toLocaleDateString('pt-BR')} · ${x.owner}${x.fechado?' · fechada':''}</p>
+        </div>
+        <p class="font-semibold text-amber-400">${money(x.amount)}</p>
+      </div>`;
+    html = `<p class="text-xs text-slate-400 mb-1">Em aberto</p>` +
+      (abertos.map(row).join('') || '<p class="text-sm text-slate-500 mb-3">Nenhuma em aberto.</p>') +
+      `<p class="text-xs text-slate-400 mt-3 mb-1">Fechadas (últimas)</p>` +
+      (fechados.slice(0,20).map(row).join('') || '<p class="text-sm text-slate-500">Nenhuma ainda.</p>');
+  }
+
+  body.innerHTML = `<h2 class="font-bold mb-3">${title}</h2><div class="space-y-2 max-h-[60vh] overflow-y-auto">${html}</div>`;
 }
 
 init().catch(e => showFatalError(e.message || String(e)));
