@@ -110,7 +110,7 @@
 </div>
 
 <!-- Modal -->
-<div id="modal-backdrop" class="hidden fixed inset-0 bg-black/60 flex items-end z-20">
+<div id="modal-backdrop" class="hidden fixed inset-0 bg-black/60 flex items-end z-20" onclick="if(event.target===event.currentTarget) closeModal()">
   <div class="bg-slate-900 w-full rounded-t-2xl p-5 max-w-md mx-auto max-h-[85vh] overflow-y-auto">
     <div id="modal-body"></div>
     <button onclick="closeModal()" class="mt-4 w-full text-slate-400 text-sm">Cancelar</button>
@@ -222,7 +222,7 @@ async function ensureCycle(){
 async function refresh(){
   const cid = currentCycle.id;
 
-  const [{data:pl},{data:fl},{data:flCiclo},{data:vl},{data:cr},{data:pv},{data:fa},{data:efundo},{data:epes},{data:pend}] = await Promise.all([
+  const [{data:pl},{data:fl},{data:flCiclo},{data:vl},{data:cr},{data:pv},{data:fa},{data:efundo},{data:epes},{data:pend},{data:credGrants},{data:credUsos}] = await Promise.all([
     sb.from('personal_ledger').select('*').eq('cycle_id', cid),
     sb.from('fund_ledger').select('*'),
     sb.from('fund_ledger').select('*').eq('cycle_id', cid),
@@ -233,6 +233,8 @@ async function refresh(){
     sb.from('fund_cash_ledger').select('*'),
     sb.from('personal_cash_ledger').select('*'),
     sb.from('pendencias').select('*').eq('resolvido', false).order('date'),
+    sb.from('credito').select('*'),
+    sb.from('credito_uso').select('*'),
   ]);
 
   const saldoPessoal = (pl||[]).reduce((s,x)=> s + (x.type==='entrada'? x.amount : -x.amount), 0);
@@ -272,7 +274,7 @@ async function refresh(){
   diffEl.className = 'text-right font-semibold ' + (diff >= 0 ? 'text-emerald-400' : 'text-rose-400');
 
   renderPendencias(pend);
-  renderTimeline(pl, fl, vl);
+  renderTimeline({pl, fl, vl, efundo, epes, pv, fa, credGrants, credUsos});
 }
 
 function renderPendencias(pend){
@@ -309,23 +311,34 @@ const ORIGEM_COLOR = {
   'Pessoal': 'border-emerald-500',
   'Fundo': 'border-sky-500',
   'Vale': 'border-lime-500',
+  'Espécie Fundo': 'border-cyan-500',
+  'Espécie Pessoal': 'border-teal-500',
+  'Crédito': 'border-yellow-500',
+  'Previdência': 'border-purple-500',
+  'Fatura': 'border-fuchsia-500',
 };
 
-function renderTimeline(pl, fl, vl){
+function renderTimeline({pl, fl, vl, efundo, epes, pv, fa, credGrants, credUsos}){
   const items = [
-    ...(pl||[]).map(x=>({...x, origem:'Pessoal'})),
-    ...(fl||[]).map(x=>({...x, origem:'Fundo'})),
-    ...(vl||[]).map(x=>({...x, origem:'Vale'})),
-  ].sort((a,b)=> new Date(b.created_at) - new Date(a.created_at)).slice(0,15);
+    ...(pl||[]).map(x=>({date:x.date, created_at:x.created_at, description:x.description, tag:x.category, amount:x.amount, positive: x.type==='entrada', origem:'Pessoal'})),
+    ...(fl||[]).map(x=>({date:x.date, created_at:x.created_at, description:x.description, tag:`${x.source} · ${x.type}`, amount:x.amount, positive: x.type==='faturamento', origem:'Fundo'})),
+    ...(vl||[]).map(x=>({date:x.date, created_at:x.created_at, description:x.description, tag:x.uso_pessoal?'uso pessoal':'fundo', amount:x.amount, positive: x.type==='entrada', origem:'Vale'})),
+    ...(efundo||[]).map(x=>({date:x.date, created_at:x.created_at, description:x.description, tag:x.type, amount:x.amount, positive: x.type==='entrada', origem:'Espécie Fundo'})),
+    ...(epes||[]).map(x=>({date:x.date, created_at:x.created_at, description:x.description, tag:x.type, amount:x.amount, positive: x.type==='entrada', origem:'Espécie Pessoal'})),
+    ...(pv||[]).map(x=>({date:x.date, created_at:x.created_at, description:x.motivo, tag:x.type, amount:x.amount, positive: x.type==='deposito', origem:'Previdência'})),
+    ...(fa||[]).map(x=>({date:x.date, created_at:x.created_at, description:x.description, tag:`fatura · ${x.owner}`, amount:x.amount, positive:false, origem:'Fatura'})),
+    ...(credGrants||[]).map(x=>({date:x.date, created_at:x.created_at, description:x.motivo, tag:'concedido', amount:x.amount_concedido, positive:true, origem:'Crédito'})),
+    ...(credUsos||[]).map(x=>({date:x.date, created_at:x.created_at, description:x.description, tag:'uso', amount:x.amount, positive:false, origem:'Crédito'})),
+  ].sort((a,b)=> new Date(b.created_at) - new Date(a.created_at)).slice(0,25);
 
   document.getElementById('timeline').innerHTML = items.map(i => `
     <div class="card flex justify-between items-center py-2 border-l-4 ${ORIGEM_COLOR[i.origem] || 'border-slate-600'}">
       <div>
         <p class="text-sm">${i.description || '(sem descrição)'}</p>
-        <p class="text-xs text-slate-500">${i.origem} · ${i.category || i.source || i.type}</p>
+        <p class="text-xs text-slate-500">${i.origem} · ${i.tag}</p>
       </div>
-      <p class="font-semibold ${i.type==='entrada'||i.type==='faturamento' ? 'text-emerald-400':'text-rose-400'}">
-        ${i.type==='entrada'||i.type==='faturamento' ? '+' : '-'}${money(i.amount)}
+      <p class="font-semibold ${i.positive ? 'text-emerald-400':'text-rose-400'}">
+        ${i.positive ? '+' : '-'}${money(i.amount)}
       </p>
     </div>
   `).join('') || '<p class="text-sm text-slate-500">Nenhum lançamento ainda.</p>';
