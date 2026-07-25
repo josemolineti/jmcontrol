@@ -1058,7 +1058,6 @@ async function submitParcela(emprestimoId){
   // Verifica se liquidou
   const { data: parc } = await sb.from('emprestimo_parcelas').select('amount').eq('emprestimo_id', emprestimoId);
   const abatido = (parc||[]).reduce((s,p)=>s+p.amount,0);
-  const c = calcEmprestimo(e.valor_emprestado, e.taxa_juros, e.meses);
   if(abatido >= c.total - 0.01){
     await sb.from('emprestimos').update({ liquidado:true, liquidado_em: date }).eq('id', emprestimoId);
   }
