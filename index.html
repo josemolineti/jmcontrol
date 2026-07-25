@@ -751,11 +751,12 @@ async function openSectorList(kind){
           <span class="text-xs px-2 py-0.5 rounded ${e.liquidado ? 'bg-emerald-800 text-emerald-300' : 'bg-amber-800 text-amber-300'}">${e.liquidado ? 'Liquidado' : 'Em aberto'}</span>
         </div>
         <p class="text-xs text-slate-500 mt-1">${e.motivo || ''} ${e.serial ? '· '+e.serial : ''}</p>
-        <div class="flex justify-between text-xs text-slate-400 mt-2">
+        <div class="flex justify-between items-center text-xs text-slate-400 mt-2">
           <p>Parcelas: ${pagas.length}/${e.meses}</p>
           <p>Parcela: ${money(c.parcela)}</p>
           <p>A pagar: <span class="text-amber-400">${money(aPagar)}</span></p>
         </div>
+        ${!e.liquidado ? `<button class="btn bg-emerald-700 w-full mt-2 text-sm" onclick="event.stopPropagation(); openPagarParcela('${e.id}', ${c.parcela}, ${aPagar})">Pagar parcela atual (${money(c.parcela)})</button>` : ''}
       </div>`;
     }).join('') || '<p class="text-sm text-slate-500">Nenhum empréstimo ainda.</p>';
     html = `<button class="btn bg-orange-600 w-full mb-3" onclick="openEmprestimoForm()">+ Novo empréstimo</button>` + rows;
@@ -928,6 +929,10 @@ async function submitParcela(emprestimoId){
   const semMovimento = document.getElementById('v-sem-mov').checked;
   const cycle = await getCycleForDate(date);
   const { data: e } = await sb.from('emprestimos').select('*').eq('id', emprestimoId).single();
+  const { data: parcAntes } = await sb.from('emprestimo_parcelas').select('id').eq('emprestimo_id', emprestimoId);
+  const parcelaNumero = (parcAntes ? parcAntes.length : 0) + 1;
+  const idEmprestimo = e.serial || e.nome;
+  const desc = `Recolhimento da parcela ${parcelaNumero}/${e.meses} do empréstimo ${idEmprestimo}`;
 
   await sb.from('emprestimo_parcelas').insert({ emprestimo_id: emprestimoId, cycle_id: cycle.id, date, amount, sem_movimento: semMovimento });
 
@@ -935,14 +940,14 @@ async function submitParcela(emprestimoId){
     // Sempre credita o fundo quando uma parcela é paga com dinheiro de verdade
     await sb.from('fund_ledger').insert({
       cycle_id: cycle.id, date, type:'faturamento', source:'interna', amount,
-      description: `Parcela paga - empréstimo ${e.nome}`, auto_gerado:true
+      description: desc, auto_gerado:true
     });
 
     // Se for empréstimo interno, também desconta do saldo pessoal
     if(e.interno){
       await sb.from('personal_ledger').insert({
         cycle_id: cycle.id, date, type:'saida', amount, category:'emprestimo_parcela',
-        description: `Parcela empréstimo: ${e.motivo||e.nome}`, auto_gerado:true
+        description: desc, auto_gerado:true
       });
     }
   }
