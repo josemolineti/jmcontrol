@@ -53,6 +53,7 @@
       <div class="card cursor-pointer" onclick="openSectorList('vale')"><p class="text-xs text-slate-400">Vale disponível</p><p id="s-vale" class="text-lg font-semibold">R$ 0,00</p></div>
       <div class="card cursor-pointer" onclick="openSectorList('credito')"><p class="text-xs text-slate-400">Crédito disponível</p><p id="s-credito" class="text-lg font-semibold">R$ 0,00</p></div>
       <div class="card cursor-pointer" onclick="openSectorList('previdencia')"><p class="text-xs text-slate-400">Previdência</p><p id="s-prev" class="text-lg font-semibold">R$ 0,00</p></div>
+      <div class="card cursor-pointer col-span-2" onclick="openSectorList('fatura')"><p class="text-xs text-slate-400">Fatura aberta (total)</p><p id="s-fatura-total" class="text-2xl font-bold text-amber-400">R$ 0,00</p></div>
       <div class="card cursor-pointer" onclick="openSectorList('fatura')"><p class="text-xs text-slate-400">Fatura aberta (pessoal)</p><p id="s-fatura-p" class="text-lg font-semibold text-amber-400">R$ 0,00</p></div>
       <div class="card cursor-pointer" onclick="openSectorList('fatura')"><p class="text-xs text-slate-400">Fatura aberta (fundo)</p><p id="s-fatura-f" class="text-lg font-semibold text-amber-400">R$ 0,00</p></div>
       <div class="card cursor-pointer" onclick="openSectorList('especie')"><p class="text-xs text-slate-400">Espécie (fundo / pessoal)</p><p id="s-especie" class="text-lg font-semibold">R$0 / R$0</p></div>
@@ -249,6 +250,7 @@ async function refresh(){
   document.getElementById('s-prev').textContent = money(saldoPrev);
   document.getElementById('s-fatura-p').textContent = money(faturaPessoal);
   document.getElementById('s-fatura-f').textContent = money(faturaFundo);
+  document.getElementById('s-fatura-total').textContent = money(faturaPessoal + faturaFundo);
   document.getElementById('s-especie').textContent = `${money(especieFundo)} / ${money(especiePessoal)}`;
 
   document.getElementById('t-pes-in').textContent = money(pesIn);
@@ -714,6 +716,9 @@ async function openSectorList(kind){
     const { data } = await sb.from('fatura_items').select('*').order('date', {ascending:false}).limit(100);
     const abertos = (data||[]).filter(x=>!x.fechado);
     const fechados = (data||[]).filter(x=>x.fechado);
+    const totalAberto = abertos.reduce((s,x)=>s+x.amount,0);
+    const totalPessoal = abertos.filter(x=>x.owner==='pessoal').reduce((s,x)=>s+x.amount,0);
+    const totalFundo = abertos.filter(x=>x.owner==='fundo').reduce((s,x)=>s+x.amount,0);
     const row = x => `<div class="card flex justify-between items-center py-2">
         <div>
           <p class="text-sm">${x.description || '(sem descrição)'}</p>
@@ -721,7 +726,17 @@ async function openSectorList(kind){
         </div>
         <p class="font-semibold text-amber-400">${money(x.amount)}</p>
       </div>`;
-    html = `<p class="text-xs text-slate-400 mb-1">Em aberto</p>` +
+    html = `<div class="card mb-3">
+        <div class="flex justify-between items-center mb-2">
+          <p class="text-sm text-slate-300">Total em aberto</p>
+          <p class="text-xl font-bold text-amber-400">${money(totalAberto)}</p>
+        </div>
+        <div class="flex justify-between text-xs text-slate-400">
+          <p>Pessoal: <span class="text-amber-300">${money(totalPessoal)}</span></p>
+          <p>Fundo: <span class="text-amber-300">${money(totalFundo)}</span></p>
+        </div>
+      </div>
+      <p class="text-xs text-slate-400 mb-1">Em aberto</p>` +
       (abertos.map(row).join('') || '<p class="text-sm text-slate-500 mb-3">Nenhuma em aberto.</p>') +
       `<p class="text-xs text-slate-400 mt-3 mb-1">Fechadas (últimas)</p>` +
       (fechados.slice(0,20).map(row).join('') || '<p class="text-sm text-slate-500">Nenhuma ainda.</p>');
