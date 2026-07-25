@@ -48,8 +48,8 @@
   <main class="p-4 space-y-4 max-w-md mx-auto">
 
     <section class="grid grid-cols-2 gap-3">
-      <div class="card cursor-pointer" onclick="openSectorList('pessoal')"><p class="text-xs text-slate-400">Saldo pessoal (ciclo)</p><p id="s-pessoal" class="text-2xl font-bold text-emerald-400">R$ 0,00</p></div>
-      <div class="card cursor-pointer" onclick="openSectorList('fundo')"><p class="text-xs text-slate-400">Fundo (total, com previdência)</p><p id="s-fundo" class="text-2xl font-bold text-sky-400">R$ 0,00</p><p id="s-fundo-breakdown" class="text-[10px] text-slate-500 mt-1"></p></div>
+      <div class="card cursor-pointer" onclick="openSectorList('pessoal')"><p class="text-xs text-slate-400">Saldo pessoal (ciclo + espécie)</p><p id="s-pessoal" class="text-2xl font-bold text-emerald-400">R$ 0,00</p><p id="s-pessoal-breakdown" class="text-[10px] text-slate-500 mt-1"></p></div>
+      <div class="card cursor-pointer" onclick="openSectorList('fundo')"><p class="text-xs text-slate-400">Fundo (total, com espécie e previdência)</p><p id="s-fundo" class="text-2xl font-bold text-sky-400">R$ 0,00</p><p id="s-fundo-breakdown" class="text-[10px] text-slate-500 mt-1"></p></div>
       <div class="card cursor-pointer" onclick="openSectorList('vale')"><p class="text-xs text-slate-400">Vale disponível</p><p id="s-vale" class="text-lg font-semibold">R$ 0,00</p></div>
       <div class="card cursor-pointer" onclick="openSectorList('credito')"><p class="text-xs text-slate-400">Crédito disponível</p><p id="s-credito" class="text-lg font-semibold">R$ 0,00</p></div>
       <div class="card cursor-pointer" onclick="openSectorList('previdencia')"><p class="text-xs text-slate-400">Previdência</p><p id="s-prev" class="text-lg font-semibold">R$ 0,00</p></div>
@@ -250,9 +250,10 @@ async function refresh(){
   const funIn = (flCiclo||[]).filter(x=>x.type==='faturamento').reduce((s,x)=>s+x.amount,0);
   const funOut = (flCiclo||[]).filter(x=>x.type==='despesa').reduce((s,x)=>s+x.amount,0);
 
-  document.getElementById('s-pessoal').textContent = money(saldoPessoal);
-  document.getElementById('s-fundo').textContent = money(saldoFundo + saldoPrev);
-  document.getElementById('s-fundo-breakdown').textContent = `Fundo: ${money(saldoFundo)} · Previdência: ${money(saldoPrev)}`;
+  document.getElementById('s-pessoal').textContent = money(saldoPessoal + especiePessoal);
+  document.getElementById('s-pessoal-breakdown').textContent = `Digital (ciclo): ${money(saldoPessoal)} · Espécie: ${money(especiePessoal)}`;
+  document.getElementById('s-fundo').textContent = money(saldoFundo + especieFundo + saldoPrev);
+  document.getElementById('s-fundo-breakdown').textContent = `Digital: ${money(saldoFundo)} · Espécie: ${money(especieFundo)} · Previdência: ${money(saldoPrev)}`;
   document.getElementById('s-vale').textContent = money(saldoVale);
   document.getElementById('s-credito').textContent = money(saldoCredito);
   document.getElementById('s-prev').textContent = money(saldoPrev);
