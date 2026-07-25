@@ -99,6 +99,7 @@
         <button class="btn bg-slate-700" onclick="openModal('especie_fundo')">Espécie fundo</button>
         <button class="btn bg-slate-700" onclick="openModal('especie_pessoal')">Espécie pessoal</button>
         <button class="btn bg-orange-800 col-span-2" onclick="openSectorList('emprestimos')">Empréstimos</button>
+        <button class="btn bg-red-900 col-span-2" onclick="openCarencia()">Pagar carência (arredondar saldo)</button>
       </div>
     </section>
 
@@ -962,6 +963,60 @@ async function submitParcela(emprestimoId){
 
   await refresh();
   await openEmprestimoDetail(emprestimoId);
+}
+
+// ---------------- CARÊNCIA ----------------
+
+async function openCarencia(){
+  const body = document.getElementById('modal-body');
+  body.innerHTML = `<h2 class="font-bold mb-3">Carência</h2><p class="text-sm text-slate-400">Calculando saldo atual…</p>`;
+  document.getElementById('modal-backdrop').classList.remove('hidden');
+
+  const { data: pl } = await sb.from('personal_ledger').select('*').eq('cycle_id', currentCycle.id);
+  const saldo = (pl||[]).reduce((s,x)=> s + (x.type==='entrada'? x.amount : -x.amount), 0);
+  const saldoArredondado = Math.floor(saldo / 5) * 5;
+  const taxa = saldo - saldoArredondado;
+
+  if(taxa <= 0.009){
+    body.innerHTML = `<h2 class="font-bold mb-3">Carência</h2>
+      <p class="text-sm text-slate-400">Seu saldo atual (${money(saldo)}) já é múltiplo de 5. Nada a arredondar agora.</p>`;
+    return;
+  }
+
+  body.innerHTML = `
+    <h2 class="font-bold mb-3">Carência</h2>
+    <p class="text-xs text-slate-400 mb-3">Desconta a taxa de arredondamento do seu saldo pessoal e credita no fundo. Pode fazer isso quantas vezes quiser no mês.</p>
+    <div class="card mb-3">
+      <div class="grid grid-cols-2 gap-y-1 text-sm">
+        <p class="text-slate-400">Saldo atual</p><p class="text-right">${money(saldo)}</p>
+        <p class="text-slate-400">Taxa de carência</p><p class="text-right text-rose-400">${money(taxa)}</p>
+        <p class="text-slate-300 font-semibold">Saldo depois</p><p class="text-right font-semibold text-emerald-400">${money(saldoArredondado)}</p>
+      </div>
+    </div>
+    ${dateField()}
+    <button class="btn bg-red-700 w-full" onclick="submitCarencia(${taxa}, ${saldo}, ${saldoArredondado})">Confirmar carência de ${money(taxa)}</button>
+  `;
+}
+
+async function submitCarencia(amount, saldoAntes, saldoDepois){
+  const date = getDate();
+  const cycle = await getCycleForDate(date);
+  const desc = `Taxa de carência (arredondamento de saldo)`;
+
+  const { data: fundTx } = await sb.from('fund_ledger').insert({
+    cycle_id: cycle.id, date, type:'faturamento', source:'interna', amount, description: desc, auto_gerado:true
+  }).select().single();
+
+  await sb.from('personal_ledger').insert({
+    cycle_id: cycle.id, date, type:'saida', amount, category:'carencia',
+    description: desc, auto_gerado:true, origem_id: fundTx.id
+  });
+
+  await sb.from('carencias').insert({
+    cycle_id: cycle.id, date, amount, saldo_antes: saldoAntes, saldo_depois: saldoDepois
+  });
+
+  closeModal(); await refresh();
 }
 
 init().catch(e => showFatalError(e.message || String(e)));
