@@ -53,10 +53,18 @@
       <div class="card cursor-pointer" onclick="openSectorList('vale')"><p class="text-xs text-slate-400">Vale disponível</p><p id="s-vale" class="text-lg font-semibold">R$ 0,00</p></div>
       <div class="card cursor-pointer" onclick="openSectorList('credito')"><p class="text-xs text-slate-400">Crédito disponível</p><p id="s-credito" class="text-lg font-semibold">R$ 0,00</p></div>
       <div class="card cursor-pointer" onclick="openSectorList('previdencia')"><p class="text-xs text-slate-400">Previdência</p><p id="s-prev" class="text-lg font-semibold">R$ 0,00</p></div>
-      <div class="card cursor-pointer col-span-2" onclick="openSectorList('fatura')"><p class="text-xs text-slate-400">Fatura aberta (total)</p><p id="s-fatura-total" class="text-2xl font-bold text-amber-400">R$ 0,00</p></div>
-      <div class="card cursor-pointer" onclick="openSectorList('fatura')"><p class="text-xs text-slate-400">Fatura aberta (pessoal)</p><p id="s-fatura-p" class="text-lg font-semibold text-amber-400">R$ 0,00</p></div>
-      <div class="card cursor-pointer" onclick="openSectorList('fatura')"><p class="text-xs text-slate-400">Fatura aberta (fundo)</p><p id="s-fatura-f" class="text-lg font-semibold text-amber-400">R$ 0,00</p></div>
       <div class="card cursor-pointer" onclick="openSectorList('especie')"><p class="text-xs text-slate-400">Espécie (fundo / pessoal)</p><p id="s-especie" class="text-lg font-semibold">R$0 / R$0</p></div>
+    </section>
+
+    <section class="card cursor-pointer" onclick="openSectorList('fatura')">
+      <div class="flex justify-between items-center mb-2">
+        <p class="text-sm text-slate-400">Fatura aberta (total)</p>
+        <p id="s-fatura-total" class="text-2xl font-bold text-amber-400">R$ 0,00</p>
+      </div>
+      <div class="flex justify-between text-xs text-slate-400">
+        <p>Pessoal: <span id="s-fatura-p" class="text-amber-300">R$ 0,00</span></p>
+        <p>Fundo: <span id="s-fatura-f" class="text-amber-300">R$ 0,00</span></p>
+      </div>
     </section>
 
     <section id="pendencias-section" class="hidden">
