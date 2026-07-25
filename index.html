@@ -99,7 +99,7 @@
         <button class="btn bg-slate-700" onclick="openModal('especie_fundo')">Espécie fundo</button>
         <button class="btn bg-slate-700" onclick="openModal('especie_pessoal')">Espécie pessoal</button>
         <button class="btn bg-orange-800 col-span-2" onclick="openSectorList('emprestimos')">Empréstimos</button>
-        <button class="btn bg-red-900 col-span-2" onclick="openCarencia()">Pagar carência (arredondar saldo)</button>
+        <button class="btn bg-red-900 col-span-2" onclick="openCarenciaMenu()">Carência</button>
       </div>
     </section>
 
@@ -762,6 +762,31 @@ async function openSectorList(kind){
     }).join('') || '<p class="text-sm text-slate-500">Nenhum empréstimo ainda.</p>';
     html = `<button class="btn bg-orange-600 w-full mb-3" onclick="openEmprestimoForm()">+ Novo empréstimo</button>` + rows;
   }
+  else if(kind==='carencia'){
+    title = 'Produtos de carência';
+    const [{data:prods},{data:pagos}] = await Promise.all([
+      sb.from('carencia_produtos').select('*').order('data_registro', {ascending:false}),
+      sb.from('carencia_pagamentos').select('*'),
+    ]);
+    const rows = (prods||[]).map(p => {
+      const pagas = (pagos||[]).filter(x=>x.produto_id===p.id);
+      const pago = pagas.reduce((s,x)=>s+x.amount,0);
+      const aPagar = Math.max(0, p.valor - pago);
+      return `<div class="card py-3 cursor-pointer" onclick="openCarenciaDetail('${p.id}')">
+        <div class="flex justify-between items-center">
+          <p class="text-sm font-semibold">${p.nome}</p>
+          <span class="text-xs px-2 py-0.5 rounded ${p.liquidado ? 'bg-emerald-800 text-emerald-300' : 'bg-amber-800 text-amber-300'}">${p.liquidado ? 'Liquidado' : 'Em aberto'}</span>
+        </div>
+        <p class="text-xs text-slate-500 mt-1">${p.motivo || ''} ${p.data_carencia ? '· prazo '+new Date(p.data_carencia).toLocaleDateString('pt-BR') : ''}</p>
+        <div class="flex justify-between text-xs text-slate-400 mt-2">
+          <p>Total: ${money(p.valor)}</p>
+          <p>Pago: ${money(pago)}</p>
+          <p>A pagar: <span class="text-amber-400">${money(aPagar)}</span></p>
+        </div>
+      </div>`;
+    }).join('') || '<p class="text-sm text-slate-500">Nenhum produto registrado ainda.</p>';
+    html = `<button class="btn bg-orange-600 w-full mb-3" onclick="openCarenciaProdutoForm()">+ Novo produto de carência</button>` + rows;
+  }
   else if(kind==='fatura'){
     title = 'Fatura do cartão';
     const { data } = await sb.from('fatura_items').select('*').order('date', {ascending:false}).limit(100);
@@ -967,10 +992,20 @@ async function submitParcela(emprestimoId){
 
 // ---------------- CARÊNCIA ----------------
 
-async function openCarencia(){
+function openCarenciaMenu(){
   const body = document.getElementById('modal-body');
-  body.innerHTML = `<h2 class="font-bold mb-3">Carência</h2><p class="text-sm text-slate-400">Calculando saldo atual…</p>`;
+  body.innerHTML = `
+    <h2 class="font-bold mb-3">Carência</h2>
+    <button class="btn bg-red-700 w-full mb-2" onclick="openCarenciaLivre()">Pagar taxa livre (arredondar saldo)</button>
+    <button class="btn bg-orange-700 w-full mb-2" onclick="openSectorList('carencia')">Ver / pagar produtos de carência registrados</button>
+    <button class="btn bg-slate-700 w-full" onclick="openCarenciaProdutoForm()">+ Registrar novo produto de carência</button>
+  `;
   document.getElementById('modal-backdrop').classList.remove('hidden');
+}
+
+async function openCarenciaLivre(){
+  const body = document.getElementById('modal-body');
+  body.innerHTML = `<h2 class="font-bold mb-3">Taxa livre de carência</h2><p class="text-sm text-slate-400">Calculando saldo atual…</p>`;
 
   const { data: pl } = await sb.from('personal_ledger').select('*').eq('cycle_id', currentCycle.id);
   const saldo = (pl||[]).reduce((s,x)=> s + (x.type==='entrada'? x.amount : -x.amount), 0);
@@ -978,30 +1013,134 @@ async function openCarencia(){
   const taxa = saldo - saldoArredondado;
 
   if(taxa <= 0.009){
-    body.innerHTML = `<h2 class="font-bold mb-3">Carência</h2>
-      <p class="text-sm text-slate-400">Seu saldo atual (${money(saldo)}) já é múltiplo de 5. Nada a arredondar agora.</p>`;
+    body.innerHTML = `<h2 class="font-bold mb-3">Taxa livre de carência</h2>
+      <p class="text-sm text-slate-400">Seu saldo digital atual (${money(saldo)}) já é múltiplo de 5. Nada a arredondar agora.</p>`;
     return;
   }
 
   body.innerHTML = `
-    <h2 class="font-bold mb-3">Carência</h2>
-    <p class="text-xs text-slate-400 mb-3">Desconta a taxa de arredondamento do seu saldo pessoal e credita no fundo. Pode fazer isso quantas vezes quiser no mês.</p>
+    <h2 class="font-bold mb-3">Taxa livre de carência</h2>
+    <p class="text-xs text-slate-400 mb-3">Só considera o saldo digital (não mexe na espécie). Desconta do seu saldo pessoal e credita no fundo.</p>
     <div class="card mb-3">
       <div class="grid grid-cols-2 gap-y-1 text-sm">
-        <p class="text-slate-400">Saldo atual</p><p class="text-right">${money(saldo)}</p>
+        <p class="text-slate-400">Saldo digital atual</p><p class="text-right">${money(saldo)}</p>
         <p class="text-slate-400">Taxa de carência</p><p class="text-right text-rose-400">${money(taxa)}</p>
         <p class="text-slate-300 font-semibold">Saldo depois</p><p class="text-right font-semibold text-emerald-400">${money(saldoArredondado)}</p>
       </div>
     </div>
     ${dateField()}
-    <button class="btn bg-red-700 w-full" onclick="submitCarencia(${taxa}, ${saldo}, ${saldoArredondado})">Confirmar carência de ${money(taxa)}</button>
+    <button class="btn bg-red-700 w-full" onclick="submitCarenciaPagamento(null, ${taxa}, ${saldo}, ${saldoArredondado}).then(closeModal)">Confirmar carência de ${money(taxa)}</button>
   `;
 }
 
-async function submitCarencia(amount, saldoAntes, saldoDepois){
+async function openCarenciaProdutoForm(id){
+  const body = document.getElementById('modal-body');
+  let p = { nome:'', data_registro: todayStr(), data_carencia:'', valor:'', motivo:'' };
+  if(id){
+    const { data } = await sb.from('carencia_produtos').select('*').eq('id', id).single();
+    p = data;
+  }
+  body.innerHTML = `
+    <h2 class="font-bold mb-3">${id?'Editar':'Novo'} produto de carência</h2>
+    <label class="text-xs text-slate-400">Nome</label>
+    <input id="cp-nome" value="${p.nome||''}" class="w-full mb-2 p-3 rounded-lg bg-slate-800 border border-slate-700">
+    <label class="text-xs text-slate-400">Valor total (R$)</label>
+    <input id="cp-valor" type="number" value="${p.valor||''}" class="w-full mb-2 p-3 rounded-lg bg-slate-800 border border-slate-700">
+    <label class="text-xs text-slate-400">Data de registro</label>
+    <input id="cp-data-registro" type="date" value="${p.data_registro||todayStr()}" class="w-full mb-2 p-3 rounded-lg bg-slate-800 border border-slate-700">
+    <label class="text-xs text-slate-400">Prazo da carência (até quando)</label>
+    <input id="cp-data-carencia" type="date" value="${p.data_carencia||''}" class="w-full mb-3 p-3 rounded-lg bg-slate-800 border border-slate-700">
+    ${field('Motivo/OBS','cp-motivo','text')}
+    <button class="btn bg-orange-600 w-full" onclick="submitCarenciaProduto(${id?`'${id}'`:'null'})">Salvar</button>
+  `;
+  document.getElementById('cp-motivo').value = p.motivo || '';
+  document.getElementById('modal-backdrop').classList.remove('hidden');
+}
+
+async function submitCarenciaProduto(id){
+  const payload = {
+    nome: val('cp-nome'),
+    valor: num('cp-valor'),
+    data_registro: val('cp-data-registro') || todayStr(),
+    data_carencia: val('cp-data-carencia') || null,
+    motivo: val('cp-motivo'),
+  };
+  if(!payload.nome || !payload.valor) return alert('Preencha nome e valor.');
+  if(id){
+    await sb.from('carencia_produtos').update(payload).eq('id', id);
+  } else {
+    await sb.from('carencia_produtos').insert(payload);
+  }
+  await openSectorList('carencia');
+}
+
+async function openCarenciaDetail(id){
+  const body = document.getElementById('modal-body');
+  const [{data:p},{data:pagos}] = await Promise.all([
+    sb.from('carencia_produtos').select('*').eq('id', id).single(),
+    sb.from('carencia_pagamentos').select('*').eq('produto_id', id).order('date', {ascending:false}),
+  ]);
+  const pago = (pagos||[]).reduce((s,x)=>s+x.amount,0);
+  const aPagar = Math.max(0, p.valor - pago);
+
+  body.innerHTML = `
+    <h2 class="font-bold mb-1">${p.nome}</h2>
+    <p class="text-xs text-slate-500 mb-3">${p.motivo||''}</p>
+    <div class="card mb-3">
+      <div class="grid grid-cols-2 gap-y-1 text-sm">
+        <p class="text-slate-400">Data registro</p><p class="text-right">${new Date(p.data_registro).toLocaleDateString('pt-BR')}</p>
+        <p class="text-slate-400">Prazo carência</p><p class="text-right">${p.data_carencia ? new Date(p.data_carencia).toLocaleDateString('pt-BR') : '-'}</p>
+        <p class="text-slate-400">Valor total</p><p class="text-right">${money(p.valor)}</p>
+        <p class="text-slate-400">Pago</p><p class="text-right text-emerald-400">${money(pago)}</p>
+        <p class="text-slate-300 font-semibold">A pagar</p><p class="text-right font-semibold ${aPagar<=0?'text-emerald-400':'text-rose-400'}">${money(aPagar)}</p>
+      </div>
+    </div>
+    <div class="flex gap-2 mb-3">
+      <button class="btn bg-slate-700 flex-1 text-sm" onclick="openCarenciaProdutoForm('${id}')">Editar</button>
+      ${aPagar > 0 ? `<button class="btn bg-emerald-700 flex-1 text-sm" onclick="openCarenciaPagarProduto('${id}', ${aPagar})">Pagar</button>` : `<span class="flex-1 flex items-center justify-center text-emerald-400 text-sm">✓ Liquidado</span>`}
+    </div>
+    <p class="text-xs text-slate-400 mb-1">Pagamentos</p>
+    <div class="space-y-2 max-h-[30vh] overflow-y-auto">
+      ${(pagos||[]).map(x=>listRow(x.date, 'Pagamento de carência', p.nome, x.amount, false)).join('') || '<p class="text-sm text-slate-500">Nenhum pagamento ainda.</p>'}
+    </div>
+  `;
+}
+
+async function openCarenciaPagarProduto(id, aPagar){
+  const body = document.getElementById('modal-body');
+  body.innerHTML = `<h2 class="font-bold mb-3">Pagar carência</h2><p class="text-sm text-slate-400">Calculando saldo atual…</p>`;
+
+  const { data: pl } = await sb.from('personal_ledger').select('*').eq('cycle_id', currentCycle.id);
+  const saldo = (pl||[]).reduce((s,x)=> s + (x.type==='entrada'? x.amount : -x.amount), 0);
+  const saldoArredondado = Math.floor(saldo / 5) * 5;
+  const taxaArredondada = Math.min(saldo - saldoArredondado, aPagar);
+
+  body.innerHTML = `
+    <h2 class="font-bold mb-3">Pagar carência</h2>
+    <p class="text-xs text-slate-400 mb-3">Saldo digital atual: ${money(saldo)} · Falta pagar dessa carência: ${money(aPagar)}</p>
+    ${dateField()}
+    <label class="text-xs text-slate-400">Valor (R$)</label>
+    <input id="v-amount" type="number" value="${aPagar.toFixed(2)}" class="w-full mb-1 p-3 rounded-lg bg-slate-800 border border-slate-700">
+    <div class="mb-3 text-xs flex flex-col gap-1 items-start">
+      ${taxaArredondada > 0.009 ? `<button class="underline text-amber-400" onclick="document.getElementById('v-amount').value='${taxaArredondada.toFixed(2)}'">Usar arredondamento pro saldo (${money(taxaArredondada)})</button>` : ''}
+      <button class="underline text-slate-400" onclick="document.getElementById('v-amount').value='${aPagar.toFixed(2)}'">Quitar tudo (${money(aPagar)})</button>
+      <p class="text-slate-500">Ou digite qualquer valor livre acima.</p>
+    </div>
+    <button class="btn bg-emerald-600 w-full" onclick="confirmCarenciaProdutoPagamento('${id}')">Confirmar</button>
+  `;
+}
+
+async function confirmCarenciaProdutoPagamento(produtoId){
+  const amount = num('v-amount'); if(!amount) return;
+  const date = getDate();
+  await submitCarenciaPagamento(produtoId, amount, null, null);
+  await openCarenciaDetail(produtoId);
+}
+
+async function submitCarenciaPagamento(produtoId, amount, saldoAntes, saldoDepois){
   const date = getDate();
   const cycle = await getCycleForDate(date);
-  const desc = `Taxa de carência (arredondamento de saldo)`;
+  const desc = produtoId ? `Pagamento de carência` : `Taxa livre de carência (arredondamento de saldo)`;
 
   const { data: fundTx } = await sb.from('fund_ledger').insert({
     cycle_id: cycle.id, date, type:'faturamento', source:'interna', amount, description: desc, auto_gerado:true
@@ -1012,11 +1151,20 @@ async function submitCarencia(amount, saldoAntes, saldoDepois){
     description: desc, auto_gerado:true, origem_id: fundTx.id
   });
 
-  await sb.from('carencias').insert({
-    cycle_id: cycle.id, date, amount, saldo_antes: saldoAntes, saldo_depois: saldoDepois
+  await sb.from('carencia_pagamentos').insert({
+    produto_id: produtoId, cycle_id: cycle.id, date, amount, saldo_antes: saldoAntes, saldo_depois: saldoDepois
   });
 
-  closeModal(); await refresh();
+  if(produtoId){
+    const { data: pagos } = await sb.from('carencia_pagamentos').select('amount').eq('produto_id', produtoId);
+    const { data: p } = await sb.from('carencia_produtos').select('valor').eq('id', produtoId).single();
+    const totalPago = (pagos||[]).reduce((s,x)=>s+x.amount,0);
+    if(totalPago >= p.valor - 0.01){
+      await sb.from('carencia_produtos').update({ liquidado:true, liquidado_em: date }).eq('id', produtoId);
+    }
+  }
+
+  await refresh();
 }
 
 init().catch(e => showFatalError(e.message || String(e)));
