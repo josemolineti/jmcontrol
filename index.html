@@ -250,8 +250,8 @@ async function refresh(){
   const saldoVale = (vl||[]).reduce((s,x)=> s + (x.type==='entrada'? x.amount : -x.amount), 0);
   const saldoCredito = (cr||[]).reduce((s,x)=> s + x.saldo_disponivel, 0);
   const saldoPrev = (pv||[]).reduce((s,x)=> x.status==='confirmado' ? s + (x.type==='deposito'? x.amount : -x.amount) : s, 0);
-  const faturaPessoal = (fa||[]).filter(x=>x.owner==='pessoal').reduce((s,x)=>s+x.amount,0);
-  const faturaFundo = (fa||[]).filter(x=>x.owner==='fundo').reduce((s,x)=>s+x.amount,0);
+  const faturaPessoal = (fa||[]).filter(x=>x.owner==='pessoal' && !x.descontado_agora).reduce((s,x)=>s+x.amount,0);
+  const faturaFundo = (fa||[]).filter(x=>x.owner==='fundo' || (x.owner==='pessoal' && x.descontado_agora)).reduce((s,x)=>s+x.amount,0);
   const especieFundo = (efundo||[]).reduce((s,x)=> s + (x.type==='entrada'? x.amount : -x.amount), 0);
   const especiePessoal = (epes||[]).reduce((s,x)=> s + (x.type==='entrada'? x.amount : -x.amount), 0);
 
@@ -407,10 +407,13 @@ function openModal(kind){
       ${field('Valor (R$)','v-amount')}
       ${field('Descrição','v-desc','text')}
       <label class="text-xs text-slate-400">Quem paga</label>
-      <select id="v-owner" class="w-full mb-3 p-3 rounded-lg bg-slate-800 border border-slate-700">
+      <select id="v-owner" class="w-full mb-3 p-3 rounded-lg bg-slate-800 border border-slate-700" onchange="toggleDescontoAgora()">
         <option value="pessoal">Pessoal</option>
         <option value="fundo">Fundo</option>
       </select>
+      <div id="desconto-agora-wrap">
+        <label class="flex items-start gap-2 mb-3 text-sm"><input type="checkbox" id="v-desconto-agora" class="mt-1"> Descontar do meu saldo agora (no fechamento da fatura, esse valor vira despesa do fundo, já que você já se cobrou)</label>
+      </div>
       <button class="btn bg-fuchsia-600 w-full" onclick="submitCartao()">Salvar</button>`;
   }
   else if(kind==='vale'){
@@ -474,6 +477,13 @@ function openModal(kind){
 
   body.innerHTML = html;
   document.getElementById('modal-backdrop').classList.remove('hidden');
+}
+
+function toggleDescontoAgora(){
+  const wrap = document.getElementById('desconto-agora-wrap');
+  if(!wrap) return;
+  wrap.style.display = val('v-owner')==='pessoal' ? 'block' : 'none';
+  if(val('v-owner')!=='pessoal') document.getElementById('v-desconto-agora').checked = false;
 }
 
 function toggleEspeciePessoalCheckbox(){
@@ -596,11 +606,29 @@ async function submitGuardarFundo(){
 
 async function submitCartao(){
   const amount = num('v-amount'); if(!amount) return;
+  const owner = val('v-owner');
+  const desc = val('v-desc');
+  const descontarAgora = owner==='pessoal' && document.getElementById('v-desconto-agora') && document.getElementById('v-desconto-agora').checked;
+
+  if(descontarAgora){
+    const saldoPessoal = await getSaldoPessoalDigital();
+    if(!(await confirmOverdraft(saldoPessoal, amount, 'seu saldo pessoal'))) return;
+  }
+
   const date = getDate();
   const cycle = await getCycleForDate(date);
+
   await sb.from('fatura_items').insert({
-    cycle_id: cycle.id, date, amount, description: val('v-desc'), owner: val('v-owner')
+    cycle_id: cycle.id, date, amount, description: desc, owner, descontado_agora: descontarAgora
   });
+
+  if(descontarAgora){
+    await sb.from('personal_ledger').insert({
+      cycle_id: cycle.id, date, type:'saida', amount, category:'fatura_pessoal_adiantado',
+      description: `Compra no cartão (descontada na hora): ${desc||''}`, auto_gerado:true
+    });
+  }
+
   closeModal(); await refresh();
 }
 
@@ -910,12 +938,12 @@ async function openSectorList(kind){
     const abertos = (data||[]).filter(x=>!x.fechado);
     const fechados = (data||[]).filter(x=>x.fechado);
     const totalAberto = abertos.reduce((s,x)=>s+x.amount,0);
-    const totalPessoal = abertos.filter(x=>x.owner==='pessoal').reduce((s,x)=>s+x.amount,0);
-    const totalFundo = abertos.filter(x=>x.owner==='fundo').reduce((s,x)=>s+x.amount,0);
+    const totalPessoal = abertos.filter(x=>x.owner==='pessoal' && !x.descontado_agora).reduce((s,x)=>s+x.amount,0);
+    const totalFundo = abertos.filter(x=>x.owner==='fundo' || (x.owner==='pessoal' && x.descontado_agora)).reduce((s,x)=>s+x.amount,0);
     const row = x => `<div class="card flex justify-between items-center py-2">
         <div>
           <p class="text-sm">${x.description || '(sem descrição)'}</p>
-          <p class="text-xs text-slate-500">${new Date(x.date).toLocaleDateString('pt-BR')} · ${x.owner}${x.fechado?' · fechada':''}</p>
+          <p class="text-xs text-slate-500">${new Date(x.date).toLocaleDateString('pt-BR')} · ${x.owner}${x.descontado_agora ? ' (já descontado de mim)' : ''}${x.fechado?' · fechada':''}</p>
         </div>
         <p class="font-semibold text-amber-400">${money(x.amount)}</p>
       </div>`;
@@ -925,8 +953,8 @@ async function openSectorList(kind){
           <p class="text-xl font-bold text-amber-400">${money(totalAberto)}</p>
         </div>
         <div class="flex justify-between text-xs text-slate-400">
-          <p>Pessoal: <span class="text-amber-300">${money(totalPessoal)}</span></p>
-          <p>Fundo: <span class="text-amber-300">${money(totalFundo)}</span></p>
+          <p>Ainda a descontar de mim: <span class="text-amber-300">${money(totalPessoal)}</span></p>
+          <p>Despesa do fundo: <span class="text-amber-300">${money(totalFundo)}</span></p>
         </div>
       </div>
       ${abertos.length ? `<button class="btn bg-fuchsia-700 w-full mb-3" onclick="openFecharFatura(${totalPessoal}, ${totalFundo})">Fechar fatura do mês</button>` : ''}
