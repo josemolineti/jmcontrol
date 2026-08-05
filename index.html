@@ -260,7 +260,7 @@ async function refresh(){
     sb.from('credito').select('*'),
     sb.from('credito_uso').select('*'),
   ]);
-  const { data: receberPend } = await sb.from('receivables').select('amount').eq('recebido', false);
+  const { data: receberPend } = await sb.from('receivables').select('amount').eq('recebido', false).eq('cancelado', false);
   const totalReceber = (receberPend||[]).reduce((s,x)=>s+x.amount,0);
   document.getElementById('s-receber-total').textContent = money(totalReceber);
 
@@ -317,10 +317,19 @@ function renderPendencias(pend){
       </div>
       <div class="text-right">
         <p class="font-semibold text-amber-400 mb-1">${money(p.amount)}</p>
-        <button class="text-xs bg-amber-700 rounded px-2 py-1" onclick="resolverPendencia('${p.id}', ${p.amount}, '${(p.description||'').replace(/'/g,"\\'")}')">Descontar agora</button>
+        <div class="flex gap-1">
+          <button class="text-xs bg-amber-700 rounded px-2 py-1" onclick="resolverPendencia('${p.id}', ${p.amount}, '${(p.description||'').replace(/'/g,"\\'")}')">Descontar agora</button>
+          <button class="text-xs bg-slate-700 rounded px-2 py-1" onclick="desconsiderarPendencia('${p.id}')">Desconsiderar</button>
+        </div>
       </div>
     </div>
   `).join('');
+}
+
+async function desconsiderarPendencia(id){
+  if(!confirm('Desconsiderar essa cobrança? O valor deixa de ser descontado de você e fica como despesa definitiva do fundo (não desconta nada do seu saldo agora).')) return;
+  await sb.from('pendencias').update({ resolvido:true, resolvido_em: todayStr() }).eq('id', id);
+  await refresh();
 }
 
 async function resolverPendencia(id, amount, desc){
@@ -825,6 +834,13 @@ async function marcarRecebido(id, amount, destino, desc){
   await openSectorList('receber');
 }
 
+async function abaterReceber(id){
+  if(!confirm('Abater esse valor a receber? Ele deixa de existir e sai da lista, sem lançar nada no fundo ou no seu saldo.')) return;
+  await sb.from('receivables').update({ cancelado:true, cancelado_em: todayStr() }).eq('id', id);
+  await refresh();
+  await openSectorList('receber');
+}
+
 // ---------------- EXTRATOS POR SETOR ----------------
 
 function listRow(dateStr, desc, tag, amount, positive){
@@ -916,8 +932,8 @@ async function openSectorList(kind){
   else if(kind==='receber'){
     title = 'Valores a receber';
     const [{data:pend},{data:recebidos}] = await Promise.all([
-      sb.from('receivables').select('*').eq('recebido', false).order('date', {ascending:false}),
-      sb.from('receivables').select('*').eq('recebido', true).order('date', {ascending:false}).limit(20),
+      sb.from('receivables').select('*').eq('recebido', false).eq('cancelado', false).order('date', {ascending:false}),
+      sb.from('receivables').select('*').or('recebido.eq.true,cancelado.eq.true').order('date', {ascending:false}).limit(20),
     ]);
     const rowPend = x => `<div class="card flex justify-between items-center py-2">
         <div>
@@ -926,14 +942,17 @@ async function openSectorList(kind){
         </div>
         <div class="text-right">
           <p class="font-semibold text-amber-400 mb-1">${money(x.amount)}</p>
-          <button class="text-xs bg-emerald-700 rounded px-2 py-1" onclick="marcarRecebido('${x.id}', ${x.amount}, '${x.destino}', '${(x.description||'').replace(/'/g,"\\'")}')">Marcar recebido</button>
+          <div class="flex gap-1">
+            <button class="text-xs bg-emerald-700 rounded px-2 py-1" onclick="marcarRecebido('${x.id}', ${x.amount}, '${x.destino}', '${(x.description||'').replace(/'/g,"\\'")}')">Recebido</button>
+            <button class="text-xs bg-slate-700 rounded px-2 py-1" onclick="abaterReceber('${x.id}')">Abater</button>
+          </div>
         </div>
       </div>`;
-    const rowDone = x => listRow(x.recebido_em || x.date, x.description, `recebido · ${x.destino}`, x.amount, true);
+    const rowDone = x => listRow(x.recebido_em || x.cancelado_em || x.date, x.description, x.cancelado ? `abatido · ${x.destino}` : `recebido · ${x.destino}`, x.amount, !x.cancelado);
     html = `<button class="btn bg-amber-600 w-full mb-3" onclick="openModal('receber')">+ Novo valor a receber</button>
       <p class="text-xs text-slate-400 mb-1">Pendentes</p>` +
       ((pend||[]).map(rowPend).join('') || '<p class="text-sm text-slate-500 mb-3">Nenhum pendente.</p>') +
-      `<p class="text-xs text-slate-400 mt-3 mb-1">Recebidos (últimos)</p>` +
+      `<p class="text-xs text-slate-400 mt-3 mb-1">Histórico (últimos)</p>` +
       ((recebidos||[]).map(rowDone).join('') || '<p class="text-sm text-slate-500">Nenhum ainda.</p>');
   }
   else if(kind==='carencia'){
