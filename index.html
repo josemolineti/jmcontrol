@@ -41,6 +41,7 @@
     <div>
       <h1 class="text-lg font-bold">JMControl</h1>
       <p id="cycle-label" class="text-xs text-slate-400"></p>
+      <button onclick="openCicloHistorico()" class="text-[10px] text-slate-500 underline">Ciclos anteriores</button>
     </div>
     <button onclick="openSectorList('receber')" class="text-xs text-right">
       <span class="block text-slate-400 underline">A receber</span>
@@ -211,6 +212,24 @@ async function getCycleForDate(dateStr){
       label, start_date: startStr, end_date: endStr, salario_definido: 0
     }).select().single();
     data = created;
+
+    // Virada do mês: traz automaticamente o saldo (sobra ou negativo) do ciclo anterior
+    const { data: anterior } = await sb.from('cycles').select('*').eq('end_date', startStr).maybeSingle();
+    if(anterior){
+      const { data: plAnterior } = await sb.from('personal_ledger').select('type,amount').eq('cycle_id', anterior.id);
+      const saldoAnterior = (plAnterior||[]).reduce((s,x)=> s + (x.type==='entrada'? x.amount : -x.amount), 0);
+      if(Math.abs(saldoAnterior) > 0.009){
+        await sb.from('personal_ledger').insert({
+          cycle_id: data.id,
+          date: startStr,
+          type: saldoAnterior > 0 ? 'entrada' : 'saida',
+          amount: Math.abs(saldoAnterior),
+          category: 'virada_mes',
+          description: `Virada do mês anterior (${anterior.label})`,
+          auto_gerado: true
+        });
+      }
+    }
   }
   return data;
 }
@@ -305,12 +324,22 @@ function renderPendencias(pend){
 }
 
 async function resolverPendencia(id, amount, desc){
-  if(!confirm(`Descontar ${money(amount)} do seu saldo pessoal agora, referente a: ${desc}?`)) return;
+  if(!confirm(`Descontar ${money(amount)} do seu saldo pessoal agora e devolver esse valor ao fundo, referente a: ${desc}?`)) return;
   const date = todayStr();
+  const saldoPessoal = await getSaldoPessoalDigital();
+  if(!(await confirmOverdraft(saldoPessoal, amount, 'seu saldo pessoal'))) return;
   const cycle = await getCycleForDate(date);
+
+  const { data: fundTx } = await sb.from('fund_ledger').insert({
+    cycle_id: cycle.id, date, type:'faturamento', source:'interna', amount,
+    description: `Devolução ao fundo (pendência): ${desc}`, auto_gerado:true
+  }).select().single();
+
   await sb.from('personal_ledger').insert({
-    cycle_id: cycle.id, date, type:'saida', amount, category:'pendencia_resolvida', description: desc, auto_gerado:true
+    cycle_id: cycle.id, date, type:'saida', amount, category:'pendencia_resolvida',
+    description: desc, auto_gerado:true, origem_id: fundTx.id
   });
+
   await sb.from('pendencias').update({ resolvido:true, resolvido_em: date }).eq('id', id);
   await refresh();
 }
@@ -1388,6 +1417,67 @@ async function confirmFecharFatura(totalPessoal, totalFundo){
   }
 
   closeModal(); await refresh();
+}
+
+// ---------------- HISTÓRICO DE CICLOS ----------------
+
+async function openCicloHistorico(){
+  const body = document.getElementById('modal-body');
+  body.innerHTML = `<h2 class="font-bold mb-3">Ciclos anteriores</h2><p class="text-sm text-slate-400">Carregando…</p>`;
+  document.getElementById('modal-backdrop').classList.remove('hidden');
+
+  const { data: ciclos } = await sb.from('cycles').select('*').order('start_date', {ascending:false});
+  const { data: todosPl } = await sb.from('personal_ledger').select('cycle_id,type,amount');
+
+  const rows = (ciclos||[]).map(c => {
+    const itens = (todosPl||[]).filter(x=>x.cycle_id===c.id);
+    const entradas = itens.filter(x=>x.type==='entrada').reduce((s,x)=>s+x.amount,0);
+    const saidas = itens.filter(x=>x.type==='saida').reduce((s,x)=>s+x.amount,0);
+    const saldo = entradas - saidas;
+    const atual = c.id === currentCycle.id;
+    return `<div class="card py-3 cursor-pointer ${atual ? 'border border-emerald-600' : ''}" onclick="openCicloDetalhe('${c.id}')">
+      <div class="flex justify-between items-center">
+        <p class="text-sm font-semibold">${c.label}${atual ? ' (atual)' : ''}</p>
+        <p class="font-semibold ${saldo>=0?'text-emerald-400':'text-rose-400'}">${money(saldo)}</p>
+      </div>
+      <p class="text-xs text-slate-500 mt-1">${new Date(c.start_date).toLocaleDateString('pt-BR')} – ${new Date(c.end_date).toLocaleDateString('pt-BR')}</p>
+      <div class="flex justify-between text-xs text-slate-400 mt-2">
+        <p>Entradas: <span class="text-emerald-400">${money(entradas)}</span></p>
+        <p>Saídas: <span class="text-rose-400">${money(saidas)}</span></p>
+      </div>
+    </div>`;
+  }).join('') || '<p class="text-sm text-slate-500">Nenhum ciclo ainda.</p>';
+
+  body.innerHTML = `<h2 class="font-bold mb-3">Ciclos anteriores</h2>
+    <div class="space-y-2 max-h-[65vh] overflow-y-auto">${rows}</div>`;
+}
+
+async function openCicloDetalhe(cycleId){
+  const body = document.getElementById('modal-body');
+  const [{data:c},{data:itens}] = await Promise.all([
+    sb.from('cycles').select('*').eq('id', cycleId).single(),
+    sb.from('personal_ledger').select('*').eq('cycle_id', cycleId).order('date', {ascending:false}),
+  ]);
+  const entradas = (itens||[]).filter(x=>x.type==='entrada').reduce((s,x)=>s+x.amount,0);
+  const saidas = (itens||[]).filter(x=>x.type==='saida').reduce((s,x)=>s+x.amount,0);
+  const saldo = entradas - saidas;
+
+  body.innerHTML = `
+    <h2 class="font-bold mb-1">${c.label}</h2>
+    <p class="text-xs text-slate-500 mb-3">${new Date(c.start_date).toLocaleDateString('pt-BR')} – ${new Date(c.end_date).toLocaleDateString('pt-BR')}</p>
+    <div class="card mb-3">
+      <div class="grid grid-cols-2 gap-y-1 text-sm">
+        <p class="text-slate-400">Entradas</p><p class="text-right text-emerald-400">${money(entradas)}</p>
+        <p class="text-slate-400">Saídas</p><p class="text-right text-rose-400">${money(saidas)}</p>
+        <p class="text-slate-300 font-semibold">Saldo final</p><p class="text-right font-semibold ${saldo>=0?'text-emerald-400':'text-rose-400'}">${money(saldo)}</p>
+      </div>
+    </div>
+    <button class="text-xs text-slate-400 underline mb-3" onclick="openCicloHistorico()">← Voltar pra lista de ciclos</button>
+    <p class="text-xs text-slate-400 mb-1">Lançamentos do ciclo</p>
+    <div class="space-y-2 max-h-[45vh] overflow-y-auto">
+      ${(itens||[]).map(x=>listRow(x.date, x.description, x.category, x.amount, x.type==='entrada')).join('') || '<p class="text-sm text-slate-500">Nenhum lançamento.</p>'}
+    </div>
+  `;
 }
 
 init().catch(e => showFatalError(e.message || String(e)));
