@@ -460,11 +460,13 @@ function openModal(kind){
       ${field('Valor (R$)','v-amount')}
       ${field('Descrição','v-desc','text')}
       <label class="text-xs text-slate-400">Tipo</label>
-      <select id="v-type" class="w-full mb-3 p-3 rounded-lg bg-slate-800 border border-slate-700">
+      <select id="v-type" class="w-full mb-3 p-3 rounded-lg bg-slate-800 border border-slate-700" onchange="toggleValePessoalCheckbox()">
         <option value="saida">Saída (uso)</option>
         <option value="entrada">Entrada (recarga)</option>
       </select>
-      <label class="flex items-center gap-2 mb-3 text-sm"><input type="checkbox" id="v-pessoal"> Uso pessoal (desconta do meu saldo, credita o fundo)</label>
+      <div id="vale-pessoal-wrap">
+        <label class="flex items-center gap-2 mb-3 text-sm"><input type="checkbox" id="v-pessoal"> Uso pessoal (desconta do meu saldo, credita o fundo)</label>
+      </div>
       <button class="btn bg-lime-600 w-full" onclick="submitVale()">Salvar</button>`;
   }
   else if(kind==='credito'){
@@ -515,6 +517,13 @@ function openModal(kind){
 
   body.innerHTML = html;
   document.getElementById('modal-backdrop').classList.remove('hidden');
+}
+
+function toggleValePessoalCheckbox(){
+  const wrap = document.getElementById('vale-pessoal-wrap');
+  if(!wrap) return;
+  wrap.style.display = val('v-type')==='saida' ? 'block' : 'none';
+  if(val('v-type')!=='saida') document.getElementById('v-pessoal').checked = false;
 }
 
 function toggleDescontoAgora(){
