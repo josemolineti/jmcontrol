@@ -670,9 +670,13 @@ async function submitCartao(){
   });
 
   if(descontarAgora){
+    const { data: fundTx } = await sb.from('fund_ledger').insert({
+      cycle_id: cycle.id, date, type:'faturamento', source:'interna', amount,
+      description: `Adiantamento de compra no cartão (haver do fundo): ${desc||''}`, auto_gerado:true
+    }).select().single();
     await sb.from('personal_ledger').insert({
       cycle_id: cycle.id, date, type:'saida', amount, category:'fatura_pessoal_adiantado',
-      description: `Compra no cartão (descontada na hora): ${desc||''}`, auto_gerado:true
+      description: `Compra no cartão (descontada na hora): ${desc||''}`, auto_gerado:true, origem_id: fundTx.id
     });
   }
 
