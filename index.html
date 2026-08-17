@@ -234,6 +234,31 @@ async function getCycleForDate(dateStr){
   return data;
 }
 
+// Período de fatura: fecha dia 14, paga dia 25 (independente do ciclo pessoal 25-25)
+async function getPeriodoForDate(dateStr){
+  const d = new Date(dateStr + 'T12:00:00');
+  let closing, payment;
+  if(d.getDate() <= 14){
+    closing = new Date(d.getFullYear(), d.getMonth(), 14);
+    payment = new Date(d.getFullYear(), d.getMonth(), 25);
+  } else {
+    closing = new Date(d.getFullYear(), d.getMonth()+1, 14);
+    payment = new Date(d.getFullYear(), d.getMonth()+1, 25);
+  }
+  const closingStr = closing.toISOString().slice(0,10);
+  const paymentStr = payment.toISOString().slice(0,10);
+  const label = `Fatura fecha ${closing.toLocaleDateString('pt-BR')} · paga ${payment.toLocaleDateString('pt-BR')}`;
+
+  let { data } = await sb.from('fatura_periodos').select('*').eq('closing_date', closingStr).maybeSingle();
+  if(!data){
+    const { data: created } = await sb.from('fatura_periodos').insert({
+      label, closing_date: closingStr, payment_date: paymentStr
+    }).select().single();
+    data = created;
+  }
+  return data;
+}
+
 function todayStr(){
   return new Date().toISOString().slice(0,10);
 }
@@ -665,8 +690,9 @@ async function submitCartao(){
   const date = getDate();
   const cycle = await getCycleForDate(date);
 
+  const periodo = await getPeriodoForDate(date);
   await sb.from('fatura_items').insert({
-    cycle_id: cycle.id, date, amount, description: desc, owner, descontado_agora: descontarAgora
+    cycle_id: cycle.id, date, amount, description: desc, owner, descontado_agora: descontarAgora, periodo_id: periodo.id
   });
 
   if(descontarAgora){
@@ -995,34 +1021,56 @@ async function openSectorList(kind){
   }
   else if(kind==='fatura'){
     title = 'Fatura do cartão';
-    const { data } = await sb.from('fatura_items').select('*').order('date', {ascending:false}).limit(100);
-    const abertos = (data||[]).filter(x=>!x.fechado);
-    const fechados = (data||[]).filter(x=>x.fechado);
-    const totalAberto = abertos.reduce((s,x)=>s+x.amount,0);
-    const totalPessoal = abertos.filter(x=>x.owner==='pessoal' && !x.descontado_agora).reduce((s,x)=>s+x.amount,0);
-    const totalFundo = abertos.filter(x=>x.owner==='fundo' || (x.owner==='pessoal' && x.descontado_agora)).reduce((s,x)=>s+x.amount,0);
+    const [{data:items},{data:periodos}] = await Promise.all([
+      sb.from('fatura_items').select('*').order('date', {ascending:false}).limit(300),
+      sb.from('fatura_periodos').select('*').order('closing_date', {ascending:false}),
+    ]);
     const row = x => `<div class="card flex justify-between items-center py-2">
         <div>
           <p class="text-sm">${x.description || '(sem descrição)'}</p>
-          <p class="text-xs text-slate-500">${new Date(x.date).toLocaleDateString('pt-BR')} · ${x.owner}${x.descontado_agora ? ' (já descontado de mim)' : ''}${x.fechado?' · fechada':''}</p>
+          <p class="text-xs text-slate-500">${new Date(x.date).toLocaleDateString('pt-BR')} · ${x.owner}${x.descontado_agora ? ' (já descontado de mim)' : ''}</p>
         </div>
         <p class="font-semibold text-amber-400">${money(x.amount)}</p>
       </div>`;
-    html = `<div class="card mb-3">
-        <div class="flex justify-between items-center mb-2">
-          <p class="text-sm text-slate-300">Total em aberto</p>
-          <p class="text-xl font-bold text-amber-400">${money(totalAberto)}</p>
+
+    const semPeriodo = (items||[]).filter(x=>!x.periodo_id);
+    const grupos = (periodos||[]).map(p => {
+      const itensP = (items||[]).filter(x=>x.periodo_id===p.id);
+      const totalPessoal = itensP.filter(x=>x.owner==='pessoal' && !x.descontado_agora).reduce((s,x)=>s+x.amount,0);
+      const totalFundo = itensP.filter(x=>x.owner==='fundo' || (x.owner==='pessoal' && x.descontado_agora)).reduce((s,x)=>s+x.amount,0);
+      const total = totalPessoal + totalFundo;
+      const hoje = todayStr();
+      const jaFechou = p.closing_date <= hoje;
+      return `<div class="card mb-3">
+        <div class="flex justify-between items-center mb-1">
+          <p class="text-sm font-semibold">${p.label}</p>
+          <span class="text-xs px-2 py-0.5 rounded ${p.paga ? 'bg-emerald-800 text-emerald-300' : jaFechou ? 'bg-amber-800 text-amber-300' : 'bg-slate-700 text-slate-300'}">${p.paga ? 'Paga' : jaFechou ? 'Fechada, aguardando pagamento' : 'Ainda acumulando compras'}</span>
         </div>
-        <div class="flex justify-between text-xs text-slate-400">
-          <p>Ainda a descontar de mim: <span class="text-amber-300">${money(totalPessoal)}</span></p>
-          <p>Despesa do fundo: <span class="text-amber-300">${money(totalFundo)}</span></p>
+        <div class="flex justify-between text-xs text-slate-400 mb-2">
+          <p>Total: <span class="text-amber-300 font-semibold">${money(total)}</span></p>
+          <p>Pessoal: ${money(totalPessoal)}</p>
+          <p>Fundo: ${money(totalFundo)}</p>
         </div>
-      </div>
-      ${abertos.length ? `<button class="btn bg-fuchsia-700 w-full mb-3" onclick="openFecharFatura(${totalPessoal}, ${totalFundo})">Fechar fatura do mês</button>` : ''}
-      <p class="text-xs text-slate-400 mb-1">Em aberto</p>` +
-      (abertos.map(row).join('') || '<p class="text-sm text-slate-500 mb-3">Nenhuma em aberto.</p>') +
-      `<p class="text-xs text-slate-400 mt-3 mb-1">Fechadas (últimas)</p>` +
-      (fechados.slice(0,20).map(row).join('') || '<p class="text-sm text-slate-500">Nenhuma ainda.</p>');
+        ${!p.paga && total > 0 ? `<button class="btn bg-fuchsia-700 w-full mb-2 text-sm" onclick="openFecharFatura('${p.id}', ${totalPessoal}, ${totalFundo})">Pagar essa fatura</button>` : ''}
+        <div class="space-y-1">${itensP.map(row).join('') || '<p class="text-xs text-slate-500">Nenhuma compra ainda.</p>'}</div>
+      </div>`;
+    }).join('');
+
+    html = grupos || '<p class="text-sm text-slate-500">Nenhuma fatura ainda.</p>';
+    if(semPeriodo.length){
+      const totalPessoalSP = semPeriodo.filter(x=>x.owner==='pessoal' && !x.descontado_agora).reduce((s,x)=>s+x.amount,0);
+      const totalFundoSP = semPeriodo.filter(x=>x.owner==='fundo' || (x.owner==='pessoal' && x.descontado_agora)).reduce((s,x)=>s+x.amount,0);
+      html += `<div class="card mb-3">
+        <p class="text-sm font-semibold mb-2">Compras antigas (de antes dessa atualização)</p>
+        <div class="flex justify-between text-xs text-slate-400 mb-2">
+          <p>Total: <span class="text-amber-300 font-semibold">${money(totalPessoalSP+totalFundoSP)}</span></p>
+          <p>Pessoal: ${money(totalPessoalSP)}</p>
+          <p>Fundo: ${money(totalFundoSP)}</p>
+        </div>
+        ${(totalPessoalSP+totalFundoSP) > 0 ? `<button class="btn bg-fuchsia-700 w-full mb-2 text-sm" onclick="openFecharFatura(null, ${totalPessoalSP}, ${totalFundoSP})">Pagar essas compras</button>` : ''}
+        <div class="space-y-1">${semPeriodo.map(row).join('')}</div>
+      </div>`;
+    }
   }
 
   body.innerHTML = `<h2 class="font-bold mb-3">${title}</h2><div class="space-y-2 max-h-[60vh] overflow-y-auto">${html}</div>`;
@@ -1397,12 +1445,12 @@ async function submitCarenciaPagamento(produtoId, amount, saldoAntes, saldoDepoi
 
 // ---------------- FECHAMENTO DA FATURA ----------------
 
-function openFecharFatura(totalPessoal, totalFundo){
+function openFecharFatura(periodoId, totalPessoal, totalFundo){
   const total = totalPessoal + totalFundo;
   const body = document.getElementById('modal-body');
   body.innerHTML = `
-    <h2 class="font-bold mb-3">Fechar fatura do mês</h2>
-    <p class="text-xs text-slate-400 mb-3">Marca todos os itens em aberto como fechados, desconta a parte pessoal do seu saldo e lança o valor total como despesa do fundo (a fatura sai do fundo, e a parte pessoal é descontada do seu salário).</p>
+    <h2 class="font-bold mb-3">Pagar fatura</h2>
+    <p class="text-xs text-slate-400 mb-3">Marca os itens dessa fatura como pagos, desconta a parte pessoal do seu saldo e lança o valor total como despesa do fundo.</p>
     <div class="card mb-3">
       <div class="grid grid-cols-2 gap-y-1 text-sm">
         <p class="text-slate-400">Total da fatura</p><p class="text-right font-semibold">${money(total)}</p>
@@ -1411,12 +1459,12 @@ function openFecharFatura(totalPessoal, totalFundo){
       </div>
     </div>
     ${dateField()}
-    <button class="btn bg-fuchsia-600 w-full" onclick="confirmFecharFatura(${totalPessoal}, ${totalFundo})">Confirmar fechamento</button>
+    <button class="btn bg-fuchsia-600 w-full" onclick="confirmFecharFatura(${periodoId ? `'${periodoId}'` : 'null'}, ${totalPessoal}, ${totalFundo})">Confirmar pagamento</button>
   `;
   document.getElementById('modal-backdrop').classList.remove('hidden');
 }
 
-async function confirmFecharFatura(totalPessoal, totalFundo){
+async function confirmFecharFatura(periodoId, totalPessoal, totalFundo){
   const total = totalPessoal + totalFundo;
   const date = getDate();
 
@@ -1429,26 +1477,38 @@ async function confirmFecharFatura(totalPessoal, totalFundo){
   }
 
   const cycle = await getCycleForDate(date);
-
-  const { data: abertos } = await sb.from('fatura_items').select('id').eq('fechado', false);
-  const ids = (abertos||[]).map(x=>x.id);
+  let periodo = null;
+  let itensQuery = sb.from('fatura_items').select('id');
+  if(periodoId){
+    const { data: p } = await sb.from('fatura_periodos').select('*').eq('id', periodoId).single();
+    periodo = p;
+    itensQuery = itensQuery.eq('periodo_id', periodoId);
+  } else {
+    itensQuery = itensQuery.is('periodo_id', null);
+  }
+  const { data: itensP } = await itensQuery;
+  const ids = (itensP||[]).map(x=>x.id);
   if(ids.length){
     await sb.from('fatura_items').update({ fechado:true, settled_cycle_id: cycle.id }).in('id', ids);
+  }
+  if(periodoId){
+    await sb.from('fatura_periodos').update({ paga:true, paga_em: date }).eq('id', periodoId);
   }
 
   const { data: fundTx } = await sb.from('fund_ledger').insert({
     cycle_id: cycle.id, date, type:'despesa', source:'externa', amount: total,
-    description: `Fechamento da fatura do cartão`, auto_gerado:true
+    description: `Pagamento da fatura do cartão (${periodo ? periodo.label : ''})`, auto_gerado:true
   }).select().single();
 
   if(totalPessoal > 0){
     await sb.from('personal_ledger').insert({
       cycle_id: cycle.id, date, type:'saida', amount: totalPessoal, category:'fatura_pessoal',
-      description: `Fechamento da fatura - parte pessoal`, auto_gerado:true, origem_id: fundTx.id
+      description: `Pagamento da fatura - parte pessoal (${periodo ? periodo.label : ''})`, auto_gerado:true, origem_id: fundTx.id
     });
   }
 
   closeModal(); await refresh();
+  await openSectorList('fatura');
 }
 
 // ---------------- HISTÓRICO DE CICLOS ----------------
