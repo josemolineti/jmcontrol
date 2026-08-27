@@ -393,7 +393,7 @@ function renderTimeline({pl, fl, vl, efundo, epes, pv, fa, credGrants, credUsos}
   const items = [
     ...(pl||[]).map(x=>({date:x.date, created_at:x.created_at, description:x.description, tag:x.category, amount:x.amount, positive: x.type==='entrada', origem:'Pessoal'})),
     ...(fl||[]).map(x=>({date:x.date, created_at:x.created_at, description:x.description, tag:`${x.source} · ${x.type}`, amount:x.amount, positive: x.type==='faturamento', origem:'Fundo'})),
-    ...(vl||[]).map(x=>({date:x.date, created_at:x.created_at, description:x.description, tag:x.uso_pessoal?'uso pessoal':'fundo', amount:x.amount, positive: x.type==='entrada', origem:'Vale'})),
+    ...(vl||[]).map(x=>({date:x.date, created_at:x.created_at, description:x.description, tag: x.type==='entrada' ? 'recarga' : (x.pago_por ? `${x.pago_por}${x.categoria?' · '+x.categoria:''}` : 'fundo'), amount:x.amount, positive: x.type==='entrada', origem:'Vale'})),
     ...(efundo||[]).map(x=>({date:x.date, created_at:x.created_at, description:x.description, tag:x.type, amount:x.amount, positive: x.type==='entrada', origem:'Espécie Fundo'})),
     ...(epes||[]).map(x=>({date:x.date, created_at:x.created_at, description:x.description, tag:x.type, amount:x.amount, positive: x.type==='entrada', origem:'Espécie Pessoal'})),
     ...(pv||[]).map(x=>({date:x.date, created_at:x.created_at, description:x.motivo, tag:x.type, amount:x.amount, positive: x.type==='deposito', origem:'Previdência'})),
@@ -490,7 +490,22 @@ function openModal(kind){
         <option value="entrada">Entrada (recarga)</option>
       </select>
       <div id="vale-pessoal-wrap">
-        <label class="flex items-center gap-2 mb-3 text-sm"><input type="checkbox" id="v-pessoal"> Uso pessoal (desconta do meu saldo, credita o fundo)</label>
+        <label class="text-xs text-slate-400">Quem usou (deixe em branco = consumo do fundo, sem cobrança)</label>
+        <input id="v-usado-por" type="text" oninput="toggleValeDescontoAgora()" class="w-full mb-3 p-3 rounded-lg bg-slate-800 border border-slate-700">
+        <label class="text-xs text-slate-400">Categoria</label>
+        <select id="v-categoria" class="w-full mb-1 p-3 rounded-lg bg-slate-800 border border-slate-700" onchange="toggleValeCategoriaOutro()">
+          <option value="">(sem categoria)</option>
+          <option value="Mercado">Mercado</option>
+          <option value="Combustível">Combustível</option>
+          <option value="Farmácia">Farmácia</option>
+          <option value="Alimentação">Alimentação</option>
+          <option value="Outro">Outro</option>
+        </select>
+        <div id="vale-categoria-outro-wrap" class="hidden">${field('Qual categoria?','v-categoria-outro','text')}</div>
+        <div id="vale-desconto-agora-wrap" class="hidden">
+          <label class="flex items-start gap-2 mb-3 text-sm"><input type="checkbox" id="v-desconto-agora"> Descontar do meu saldo agora (em vez de virar "a receber" pra acertar depois)</label>
+        </div>
+        <p id="vale-receber-aviso" class="text-xs text-amber-400 mb-3 hidden">Isso vai gerar um "a receber" do fundo, referente a quem usou. Marque como recebido quando o pix cair.</p>
       </div>
       <button class="btn bg-lime-600 w-full" onclick="submitVale()">Salvar</button>`;
   }
@@ -548,7 +563,26 @@ function toggleValePessoalCheckbox(){
   const wrap = document.getElementById('vale-pessoal-wrap');
   if(!wrap) return;
   wrap.style.display = val('v-type')==='saida' ? 'block' : 'none';
-  if(val('v-type')!=='saida') document.getElementById('v-pessoal').checked = false;
+  if(val('v-type')!=='saida'){
+    document.getElementById('v-usado-por').value = '';
+  }
+  toggleValeDescontoAgora();
+}
+
+function toggleValeCategoriaOutro(){
+  const wrap = document.getElementById('vale-categoria-outro-wrap');
+  if(!wrap) return;
+  wrap.style.display = val('v-categoria')==='Outro' ? 'block' : 'none';
+}
+
+function toggleValeDescontoAgora(){
+  const usadoPor = (val('v-usado-por')||'').trim();
+  const descontoWrap = document.getElementById('vale-desconto-agora-wrap');
+  const aviso = document.getElementById('vale-receber-aviso');
+  const ehEu = usadoPor.toLowerCase() === 'eu';
+  if(descontoWrap) descontoWrap.style.display = ehEu ? 'block' : 'none';
+  if(!ehEu && document.getElementById('v-desconto-agora')) document.getElementById('v-desconto-agora').checked = false;
+  if(aviso) aviso.classList.toggle('hidden', !usadoPor);
 }
 
 function toggleDescontoAgora(){
@@ -712,29 +746,46 @@ async function submitCartao(){
 async function submitVale(){
   const amount = num('v-amount'); if(!amount) return;
   const type = val('v-type');
+  const desc = val('v-desc');
+  const usadoPor = type==='saida' ? (val('v-usado-por')||'').trim() : '';
+  let categoria = type==='saida' ? val('v-categoria') : '';
+  if(categoria==='Outro') categoria = (val('v-categoria-outro')||'').trim() || 'Outro';
+  const ehEu = usadoPor.toLowerCase() === 'eu';
+  const descontarAgora = ehEu && document.getElementById('v-desconto-agora') && document.getElementById('v-desconto-agora').checked;
+
   if(type==='saida'){
     const saldo = await getSaldoVale();
     if(!blockIfExceeds(saldo, amount, 'vale')) return;
   }
-  const usoPessoal = document.getElementById('v-pessoal').checked;
-  const desc = val('v-desc');
-  if(type==='saida' && usoPessoal){
+  // valida ANTES de inserir qualquer coisa, pra não deixar registro órfão se o usuário cancelar
+  if(type==='saida' && descontarAgora){
     const saldoPessoal = await getSaldoPessoalDigital();
     if(!(await confirmOverdraft(saldoPessoal, amount, 'seu saldo pessoal'))) return;
   }
+
   const date = getDate();
   const cycle = await getCycleForDate(date);
-  await sb.from('vale_ledger').insert({
-    cycle_id: cycle.id, date, type, amount, description: desc, uso_pessoal: usoPessoal
-  });
-  if(type==='saida' && usoPessoal){
-    const { data: fundTx } = await sb.from('fund_ledger').insert({
-      cycle_id: cycle.id, date, type:'faturamento', source:'interna', amount, description:`Vale uso pessoal (haver do fundo): ${desc}`, auto_gerado:true
-    }).select().single();
-    await sb.from('personal_ledger').insert({
-      cycle_id: cycle.id, date, type:'saida', amount, category:'vale_pessoal',
-      description: desc, auto_gerado:true, origem_id: fundTx.id
-    });
+  const { data: valeRow } = await sb.from('vale_ledger').insert({
+    cycle_id: cycle.id, date, type, amount, description: desc, pago_por: usadoPor || null, categoria: categoria || null
+  }).select().single();
+
+  if(type==='saida' && usadoPor){
+    const descCompleto = `Vale usado por ${usadoPor}${categoria ? ' - ' + categoria : ''}${desc ? ': ' + desc : ''}`;
+    if(descontarAgora){
+      // acerto imediato: desconta do meu saldo agora e credita o fundo na hora
+      const { data: fundTx } = await sb.from('fund_ledger').insert({
+        cycle_id: cycle.id, date, type:'faturamento', source:'interna', amount, description: descCompleto, auto_gerado:true
+      }).select().single();
+      await sb.from('personal_ledger').insert({
+        cycle_id: cycle.id, date, type:'saida', amount, category:'vale_pessoal',
+        description: descCompleto, auto_gerado:true, origem_id: fundTx.id
+      });
+    } else {
+      // vira "a receber" do fundo — só credita quando o pix cair (marcar como recebido)
+      await sb.from('receivables').insert({
+        date, amount, description: descCompleto, destino: 'fundo', origem_vale_id: valeRow.id
+      });
+    }
   }
   closeModal(); await refresh();
 }
@@ -912,7 +963,26 @@ async function openSectorList(kind){
   else if(kind==='vale'){
     title = 'Extrato do vale (saldo contínuo)';
     const { data } = await sb.from('vale_ledger').select('*').order('date', {ascending:false}).limit(100);
-    html = (data||[]).map(x => listRow(x.date, x.description, x.uso_pessoal ? 'uso pessoal' : 'fundo', x.amount, x.type==='entrada')).join('') || '<p class="text-sm text-slate-500">Nada ainda.</p>';
+    const saidas = (data||[]).filter(x=>x.type==='saida' && x.pago_por);
+    const porPessoa = {};
+    const porCategoria = {};
+    saidas.forEach(x=>{
+      porPessoa[x.pago_por] = (porPessoa[x.pago_por]||0) + x.amount;
+      const cat = x.categoria || '(sem categoria)';
+      porCategoria[cat] = (porCategoria[cat]||0) + x.amount;
+    });
+    const resumo = saidas.length ? `
+      <div class="card mb-3">
+        <p class="text-xs text-slate-400 mb-1">Por pessoa</p>
+        ${Object.entries(porPessoa).map(([k,v])=>`<div class="flex justify-between text-sm"><span>${k}</span><span>${money(v)}</span></div>`).join('')}
+        <p class="text-xs text-slate-400 mt-2 mb-1">Por categoria</p>
+        ${Object.entries(porCategoria).map(([k,v])=>`<div class="flex justify-between text-sm"><span>${k}</span><span>${money(v)}</span></div>`).join('')}
+      </div>` : '';
+    html = resumo + ((data||[]).map(x => {
+      let tag = 'recarga';
+      if(x.type==='saida') tag = x.pago_por ? `${x.pago_por}${x.categoria?' · '+x.categoria:''}` : 'fundo';
+      return listRow(x.date, x.description, tag, x.amount, x.type==='entrada');
+    }).join('') || '<p class="text-sm text-slate-500">Nada ainda.</p>');
   }
   else if(kind==='credito'){
     title = 'Crédito — concessões e usos';
