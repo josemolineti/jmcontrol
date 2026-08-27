@@ -783,7 +783,8 @@ async function submitVale(){
     } else {
       // vira "a receber" do fundo — só credita quando o pix cair (marcar como recebido)
       await sb.from('receivables').insert({
-        date, amount, description: descCompleto, destino: 'fundo', origem_vale_id: valeRow.id
+        date, amount, description: descCompleto, destino: 'fundo', origem_vale_id: valeRow.id,
+        pessoa: usadoPor, categoria: categoria || null
       });
     }
   }
@@ -1041,27 +1042,19 @@ async function openSectorList(kind){
   else if(kind==='receber'){
     title = 'Valores a receber';
     const [{data:pend},{data:recebidos}] = await Promise.all([
-      sb.from('receivables').select('*').eq('recebido', false).eq('cancelado', false).order('date', {ascending:false}),
+      sb.from('receivables').select('*').eq('recebido', false).eq('cancelado', false).order('date', {ascending:true}),
       sb.from('receivables').select('*').or('recebido.eq.true,cancelado.eq.true').order('date', {ascending:false}).limit(20),
     ]);
-    const rowPend = x => `<div class="card flex justify-between items-center py-2">
-        <div>
-          <p class="text-sm">${x.description || '(sem descrição)'}</p>
-          <p class="text-xs text-slate-500">${new Date(x.date).toLocaleDateString('pt-BR')} · ${x.destino}</p>
-        </div>
-        <div class="text-right">
-          <p class="font-semibold text-amber-400 mb-1">${money(x.amount)}</p>
-          <div class="flex gap-1">
-            <button class="text-xs bg-emerald-700 rounded px-2 py-1" onclick="marcarRecebido('${x.id}', ${x.amount}, '${x.destino}', '${(x.description||'').replace(/'/g,"\\'")}')">Recebido</button>
-            <button class="text-xs bg-slate-700 rounded px-2 py-1" onclick="abaterReceber('${x.id}')">Abater</button>
-          </div>
-        </div>
-      </div>`;
+    window._receberPend = pend || [];
+    if(!window._receberAgrupamento) window._receberAgrupamento = 'pessoa';
     const rowDone = x => listRow(x.recebido_em || x.cancelado_em || x.date, x.description, x.cancelado ? `abatido · ${x.destino}` : `recebido · ${x.destino}`, x.amount, !x.cancelado);
     html = `<button class="btn bg-amber-600 w-full mb-3" onclick="openModal('receber')">+ Novo valor a receber</button>
-      <p class="text-xs text-slate-400 mb-1">Pendentes</p>` +
-      ((pend||[]).map(rowPend).join('') || '<p class="text-sm text-slate-500 mb-3">Nenhum pendente.</p>') +
-      `<p class="text-xs text-slate-400 mt-3 mb-1">Histórico (últimos)</p>` +
+      <div class="flex gap-2 mb-3">
+        <button class="btn flex-1 text-xs ${window._receberAgrupamento==='pessoa'?'bg-amber-700':'bg-slate-700'}" onclick="setReceberAgrupamento('pessoa')">Agrupar por pessoa</button>
+        <button class="btn flex-1 text-xs ${window._receberAgrupamento==='categoria'?'bg-amber-700':'bg-slate-700'}" onclick="setReceberAgrupamento('categoria')">Agrupar por categoria</button>
+      </div>
+      <div id="receber-grupos"></div>
+      <p class="text-xs text-slate-400 mt-3 mb-1">Histórico (últimos)</p>` +
       ((recebidos||[]).map(rowDone).join('') || '<p class="text-sm text-slate-500">Nenhum ainda.</p>');
   }
   else if(kind==='carencia'){
@@ -1144,6 +1137,94 @@ async function openSectorList(kind){
   }
 
   body.innerHTML = `<h2 class="font-bold mb-3">${title}</h2><div class="space-y-2 max-h-[60vh] overflow-y-auto">${html}</div>`;
+  if(kind==='receber') renderReceberGrupos();
+}
+
+function setReceberAgrupamento(campo){
+  window._receberAgrupamento = campo;
+  renderReceberGrupos();
+}
+
+function renderReceberGrupos(){
+  const wrap = document.getElementById('receber-grupos');
+  if(!wrap) return;
+  const pend = window._receberPend || [];
+  const campo = window._receberAgrupamento;
+
+  const rowPend = x => `<div class="card flex justify-between items-center py-2">
+      <div>
+        <p class="text-sm">${x.description || '(sem descrição)'}</p>
+        <p class="text-xs text-slate-500">${new Date(x.date).toLocaleDateString('pt-BR')} · ${x.destino}</p>
+      </div>
+      <div class="text-right">
+        <p class="font-semibold text-amber-400 mb-1">${money(x.amount)}</p>
+        <div class="flex gap-1">
+          <button class="text-xs bg-emerald-700 rounded px-2 py-1" onclick="marcarRecebido('${x.id}', ${x.amount}, '${x.destino}', '${(x.description||'').replace(/'/g,"\\'")}')">Recebido</button>
+          <button class="text-xs bg-slate-700 rounded px-2 py-1" onclick="abaterReceber('${x.id}')">Abater</button>
+        </div>
+      </div>
+    </div>`;
+
+  const comGrupo = pend.filter(x => x[campo]);
+  const semGrupo = pend.filter(x => !x[campo]);
+
+  const grupos = {};
+  comGrupo.forEach(x => {
+    const k = x[campo];
+    if(!grupos[k]) grupos[k] = [];
+    grupos[k].push(x);
+  });
+
+  const gruposHtml = Object.entries(grupos).map(([nome, itens]) => {
+    const total = itens.reduce((s,x)=>s+x.amount,0);
+    return `<div class="card mb-2 border border-amber-800">
+      <div class="flex justify-between items-center mb-2">
+        <p class="text-sm font-semibold">${nome} <span class="text-xs text-slate-400">(${itens.length} pendente${itens.length>1?'s':''})</span></p>
+        <p class="font-semibold text-amber-400">${money(total)}</p>
+      </div>
+      <button class="btn bg-emerald-700 w-full text-xs mb-2" onclick="receberEmLote('${campo}', '${nome.replace(/'/g,"\\'")}', ${total})">Receber em lote</button>
+      <div class="space-y-1">${itens.map(rowPend).join('')}</div>
+    </div>`;
+  }).join('');
+
+  const semGrupoHtml = semGrupo.length ? `<p class="text-xs text-slate-400 mt-3 mb-1">Sem ${campo} (avulso)</p>${semGrupo.map(rowPend).join('')}` : '';
+
+  wrap.innerHTML = (gruposHtml || semGrupoHtml) ? (gruposHtml + semGrupoHtml) : '<p class="text-sm text-slate-500 mb-3">Nenhum pendente.</p>';
+}
+
+async function receberEmLote(campo, nome, total){
+  const input = prompt(`Quanto você recebeu de ${nome} agora? (pendente: ${money(total)})\nSe receber menos que o total, o restante continua pendente. Se receber a mais, o excedente é ignorado.`, total.toFixed(2).replace('.',','));
+  if(input === null) return;
+  const valorRecebido = parseFloat(input.replace(/\./g,'').replace(',','.'));
+  if(!valorRecebido || valorRecebido <= 0) return;
+  const valorAplicado = Math.min(valorRecebido, total);
+  if(!confirm(`Confirmar recebimento de ${money(valorAplicado)} de ${nome}? Isso credita o fundo agora e quita as pendências mais antigas primeiro.`)) return;
+
+  const pend = (window._receberPend || []).filter(x => x[campo] === nome).sort((a,b)=> new Date(a.date) - new Date(b.date));
+  let restante = valorAplicado;
+  const date = todayStr();
+
+  for(const item of pend){
+    if(restante <= 0.009) break;
+    if(item.amount <= restante + 0.009){
+      await sb.from('receivables').update({ recebido:true, recebido_em: date }).eq('id', item.id);
+      restante -= item.amount;
+    } else {
+      // pagamento parcial: reduz o valor do item e mantém pendente
+      const novoValor = item.amount - restante;
+      await sb.from('receivables').update({ amount: novoValor, description: `${item.description || ''} (recebido parcial de ${money(restante)} em ${new Date(date).toLocaleDateString('pt-BR')})` }).eq('id', item.id);
+      restante = 0;
+    }
+  }
+
+  const cycle = await getCycleForDate(date);
+  await sb.from('fund_ledger').insert({
+    cycle_id: cycle.id, date, type:'faturamento', source:'externa', amount: valorAplicado,
+    description: `Recebimento em lote (${campo}: ${nome})`, auto_gerado:true
+  });
+
+  await refresh();
+  await openSectorList('receber');
 }
 
 // ---------------- EMPRÉSTIMOS ----------------
