@@ -904,23 +904,73 @@ async function submitReceber(){
 }
 
 async function marcarRecebido(id, amount, destino, desc){
-  if(!confirm(`Marcar ${money(amount)} (${desc||'sem descrição'}) como recebido? Isso lança a entrada ${destino==='fundo'?'no fundo':'no seu saldo pessoal'} agora.`)) return;
+  const input = prompt(`Quanto foi recebido agora? (pendente: ${money(amount)})\nSe for menos que o total, o restante continua pendente.`, amount.toFixed(2).replace('.',','));
+  if(input === null) return;
+  const valorRecebido = parseFloat(String(input).replace(/\./g,'').replace(',','.'));
+  if(!valorRecebido || valorRecebido <= 0) return;
+  const valorAplicado = Math.min(valorRecebido, amount);
+  if(!confirm(`Confirmar recebimento de ${money(valorAplicado)} (${desc||'sem descrição'})? Isso lança a entrada ${destino==='fundo'?'no fundo':'no seu saldo pessoal'} agora.`)) return;
+
   const date = todayStr();
   const cycle = await getCycleForDate(date);
+  const restante = amount - valorAplicado;
 
   if(destino==='fundo'){
     await sb.from('fund_ledger').insert({
-      cycle_id: cycle.id, date, type:'faturamento', source:'externa', amount,
+      cycle_id: cycle.id, date, type:'faturamento', source:'externa', amount: valorAplicado,
       description: `Recebimento: ${desc||''}`, auto_gerado:true
     });
   } else {
     await sb.from('personal_ledger').insert({
-      cycle_id: cycle.id, date, type:'entrada', amount, category:'recebimento',
+      cycle_id: cycle.id, date, type:'entrada', amount: valorAplicado, category:'recebimento',
       description: `Recebimento: ${desc||''}`, auto_gerado:true
     });
   }
 
-  await sb.from('receivables').update({ recebido:true, recebido_em: date }).eq('id', id);
+  if(restante > 0.009){
+    await sb.from('receivables').update({
+      amount: restante,
+      description: `${desc || ''} (recebido parcial de ${money(valorAplicado)} em ${new Date(date).toLocaleDateString('pt-BR')})`
+    }).eq('id', id);
+  } else {
+    await sb.from('receivables').update({ recebido:true, recebido_em: date }).eq('id', id);
+  }
+  await refresh();
+  await openSectorList('receber');
+}
+
+async function descontarReceivableDeMim(id, amount, desc){
+  const input = prompt(`Quanto disso é seu e você quer descontar do seu saldo agora? (pendente: ${money(amount)})\nO restante continua pendente pra receber de quem mais usou.`, amount.toFixed(2).replace('.',','));
+  if(input === null) return;
+  const valor = parseFloat(String(input).replace(/\./g,'').replace(',','.'));
+  if(!valor || valor <= 0) return;
+  const valorAplicado = Math.min(valor, amount);
+
+  const saldoPessoal = await getSaldoPessoalDigital();
+  if(!(await confirmOverdraft(saldoPessoal, valorAplicado, 'seu saldo pessoal'))) return;
+  if(!confirm(`Descontar ${money(valorAplicado)} do seu saldo pessoal agora e creditar o fundo, referente a: ${desc||'sem descrição'}?`)) return;
+
+  const date = todayStr();
+  const cycle = await getCycleForDate(date);
+  const restante = amount - valorAplicado;
+
+  const { data: fundTx } = await sb.from('fund_ledger').insert({
+    cycle_id: cycle.id, date, type:'faturamento', source:'interna', amount: valorAplicado,
+    description: `Acerto pessoal de pendência: ${desc||''}`, auto_gerado:true
+  }).select().single();
+  await sb.from('personal_ledger').insert({
+    cycle_id: cycle.id, date, type:'saida', amount: valorAplicado, category:'vale_pessoal',
+    description: `Acerto pessoal de pendência: ${desc||''}`, auto_gerado:true, origem_id: fundTx.id
+  });
+
+  if(restante > 0.009){
+    await sb.from('receivables').update({
+      amount: restante,
+      description: `${desc || ''} (parte de ${money(valorAplicado)} descontada de mim em ${new Date(date).toLocaleDateString('pt-BR')})`
+    }).eq('id', id);
+  } else {
+    await sb.from('receivables').update({ recebido:true, recebido_em: date }).eq('id', id);
+  }
   await refresh();
   await openSectorList('receber');
 }
@@ -1161,8 +1211,9 @@ function renderReceberGrupos(){
       </div>
       <div class="text-right">
         <p class="font-semibold text-amber-400 mb-1">${money(x.amount)}</p>
-        <div class="flex gap-1">
+        <div class="flex gap-1 flex-wrap justify-end">
           <button class="text-xs bg-emerald-700 rounded px-2 py-1" onclick="marcarRecebido('${x.id}', ${x.amount}, '${x.destino}', '${(x.description||'').replace(/'/g,"\\'")}')">Recebido</button>
+          ${x.destino==='fundo' ? `<button class="text-xs bg-cyan-700 rounded px-2 py-1" onclick="descontarReceivableDeMim('${x.id}', ${x.amount}, '${(x.description||'').replace(/'/g,"\\'")}')">Descontar de mim</button>` : ''}
           <button class="text-xs bg-slate-700 rounded px-2 py-1" onclick="abaterReceber('${x.id}')">Abater</button>
         </div>
       </div>
