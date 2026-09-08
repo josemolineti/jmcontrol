@@ -512,14 +512,16 @@ function openModal(kind){
       ${field('Valor (R$)','v-amount')}
       <label class="text-xs text-slate-400">De</label>
       <select id="v-conta-origem" class="w-full mb-3 p-3 rounded-lg bg-slate-800 border border-slate-700">
+        <option value="">Sem conta / geral</option>
         ${contasFundoCache.map(c => `<option value="${c.id}">${c.nome}${c.tipo?' · '+c.tipo:''}</option>`).join('')}
       </select>
       <label class="text-xs text-slate-400">Para</label>
       <select id="v-conta-destino" class="w-full mb-3 p-3 rounded-lg bg-slate-800 border border-slate-700">
+        <option value="">Sem conta / geral</option>
         ${contasFundoCache.map(c => `<option value="${c.id}">${c.nome}${c.tipo?' · '+c.tipo:''}</option>`).join('')}
       </select>
       ${field('Descrição (opcional)','v-desc','text')}
-      ${contasFundoCache.length < 2 ? '<p class="text-sm text-amber-400 mb-3">Você precisa de pelo menos 2 contas cadastradas pra transferir entre elas.</p>' : ''}
+      ${contasFundoCache.length < 1 ? '<p class="text-sm text-amber-400 mb-3">Crie pelo menos uma conta pra ter pra onde transferir.</p>' : ''}
       <button class="btn bg-indigo-600 w-full" onclick="submitTransferenciaConta()">Transferir</button>`;
   }
   else if(kind==='resgate_fundo'){
@@ -749,24 +751,24 @@ async function submitFund(type, source){
 }
 
 async function getSaldoContaFundo(contaId){
-  const { data } = await sb.from('fund_ledger').select('type,amount').eq('conta_id', contaId);
+  let q = sb.from('fund_ledger').select('type,amount');
+  q = contaId ? q.eq('conta_id', contaId) : q.is('conta_id', null);
+  const { data } = await q;
   return (data||[]).reduce((s,x)=> s + (x.type==='faturamento'? x.amount : -x.amount), 0);
 }
 
 async function submitTransferenciaConta(){
   const amount = num('v-amount'); if(!amount) return;
-  const origemId = val('v-conta-origem');
-  const destinoId = val('v-conta-destino');
-  if(!origemId || !destinoId){ alert('Escolha as duas contas.'); return; }
+  const origemId = val('v-conta-origem') || null;
+  const destinoId = val('v-conta-destino') || null;
   if(origemId === destinoId){ alert('Escolha contas diferentes.'); return; }
 
   const saldoOrigem = await getSaldoContaFundo(origemId);
   if(!(await confirmOverdraft(saldoOrigem, amount, 'o saldo dessa conta'))) return;
 
-  const origem = contasFundoCache.find(c=>c.id===origemId);
-  const destino = contasFundoCache.find(c=>c.id===destinoId);
+  const nomeConta = id => id ? (contasFundoCache.find(c=>c.id===id)?.nome || '?') : 'Sem conta / geral';
   const desc = val('v-desc');
-  const descCompleto = `Transferência: ${origem?.nome||'?'} → ${destino?.nome||'?'}${desc ? ' - ' + desc : ''}`;
+  const descCompleto = `Transferência: ${nomeConta(origemId)} → ${nomeConta(destinoId)}${desc ? ' - ' + desc : ''}`;
   const date = getDate();
   const cycle = await getCycleForDate(date);
 
