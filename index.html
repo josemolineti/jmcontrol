@@ -94,6 +94,8 @@
         <button class="btn bg-emerald-700" onclick="openModal('entrada_pessoal')">Entrada pessoal</button>
         <button class="btn bg-rose-900" onclick="openModal('despesa_fundo')">Despesa do fundo</button>
         <button class="btn bg-sky-800" onclick="openModal('faturamento_fundo')">Faturamento do fundo</button>
+        <button class="btn bg-sky-900 col-span-2" onclick="openModal('rendimento_fundo')">Rendimento de uma conta</button>
+        <button class="btn bg-indigo-900 col-span-2" onclick="openModal('transferencia_fundo')">Transferir entre contas do fundo</button>
         <button class="btn bg-indigo-700 col-span-2" onclick="openModal('resgate_fundo')">Usar $ do fundo pra mim</button>
         <button class="btn bg-teal-700 col-span-2" onclick="openModal('guardar_fundo')">Descontar de mim e guardar no fundo</button>
         <button class="btn bg-fuchsia-800 col-span-2" onclick="openModal('cartao')">Compra no cartão</button>
@@ -136,6 +138,50 @@ window.addEventListener('unhandledrejection', e => showFatalError('promise: ' + 
 const money = v => (v||0).toLocaleString('pt-BR', {style:'currency', currency:'BRL'});
 let sb, currentCycle;
 const sbLib = window.supabase;
+let contasFundoCache = [];
+
+async function loadContasFundo(){
+  const { data } = await sb.from('contas_fundo').select('*').eq('ativa', true).order('nome');
+  contasFundoCache = data || [];
+  return contasFundoCache;
+}
+
+function contaSelectHtml(id, requerido=false){
+  const opts = contasFundoCache.map(c => `<option value="${c.id}">${c.nome}${c.tipo ? ' · ' + c.tipo : ''}</option>`).join('');
+  return `<label class="text-xs text-slate-400">Conta${requerido?'':' (opcional)'}</label>
+    <div class="flex gap-2 mb-3">
+      <select id="${id}" class="flex-1 p-3 rounded-lg bg-slate-800 border border-slate-700">
+        ${requerido ? '' : '<option value="">Sem conta (geral)</option>'}
+        ${opts}
+      </select>
+      <button type="button" class="btn bg-slate-700 px-3" onclick="criarContaFundo('${id}')">+ Nova</button>
+    </div>`;
+}
+
+async function criarContaFundoERecarregar(){
+  const nome = prompt('Nome do banco/investimento (ex: Sicredi, Inter):');
+  if(!nome || !nome.trim()) return;
+  const tipo = prompt('Tipo de investimento (ex: CDI, Ações, Poupança) - opcional:') || '';
+  await sb.from('contas_fundo').insert({ nome: nome.trim(), tipo: tipo.trim() || null });
+  await loadContasFundo();
+  await openSectorList('fundo');
+}
+
+async function criarContaFundo(selectId){
+  const nome = prompt('Nome do banco/investimento (ex: Sicredi, Inter):');
+  if(!nome || !nome.trim()) return;
+  const tipo = prompt('Tipo de investimento (ex: CDI, Ações, Poupança) - opcional:') || '';
+  const { data } = await sb.from('contas_fundo').insert({ nome: nome.trim(), tipo: tipo.trim() || null }).select().single();
+  await loadContasFundo();
+  const sel = document.getElementById(selectId);
+  if(sel){
+    const opt = document.createElement('option');
+    opt.value = data.id;
+    opt.textContent = data.tipo ? `${data.nome} · ${data.tipo}` : data.nome;
+    sel.appendChild(opt);
+    sel.value = data.id;
+  }
+}
 
 function saveConfig(){
   let url = document.getElementById('cfg-url').value.trim();
@@ -173,6 +219,7 @@ async function init(){
   }
   document.getElementById('app').classList.remove('hidden');
   await ensureCycle();
+  await loadContasFundo();
   await refresh();
 }
 
@@ -187,6 +234,7 @@ async function doLogin(){
   document.getElementById('login').classList.add('hidden');
   document.getElementById('app').classList.remove('hidden');
   await ensureCycle();
+  await loadContasFundo();
   await refresh();
 }
 
@@ -301,8 +349,8 @@ async function refresh(){
 
   const pesIn = (pl||[]).filter(x=>x.type==='entrada').reduce((s,x)=>s+x.amount,0);
   const pesOut = (pl||[]).filter(x=>x.type==='saida').reduce((s,x)=>s+x.amount,0);
-  const funIn = (flCiclo||[]).filter(x=>x.type==='faturamento').reduce((s,x)=>s+x.amount,0);
-  const funOut = (flCiclo||[]).filter(x=>x.type==='despesa').reduce((s,x)=>s+x.amount,0);
+  const funIn = (flCiclo||[]).filter(x=>x.type==='faturamento' && x.source!=='transferencia').reduce((s,x)=>s+x.amount,0);
+  const funOut = (flCiclo||[]).filter(x=>x.type==='despesa' && x.source!=='transferencia').reduce((s,x)=>s+x.amount,0);
 
   document.getElementById('s-pessoal').textContent = money(saldoPessoal + especiePessoal);
   document.getElementById('s-pessoal-breakdown').textContent = `Digital (ciclo): ${money(saldoPessoal)} · Espécie: ${money(especiePessoal)}`;
@@ -445,7 +493,34 @@ function openModal(kind){
       ${dateField()}
       ${field('Valor (R$)','v-amount')}
       ${field('Descrição','v-desc','text')}
+      ${contaSelectHtml('v-conta')}
       <button class="btn bg-sky-600 w-full" onclick="submitFund('${kind==='despesa_fundo'?'despesa':'faturamento'}', 'externa')">Salvar</button>`;
+  }
+  else if(kind==='rendimento_fundo'){
+    html = `<h2 class="font-bold mb-3">Rendimento de uma conta</h2>
+      <p class="text-xs text-slate-400 mb-3">Lança o rendimento (juros/dividendos) que caiu numa conta específica, aumentando o saldo do fundo.</p>
+      ${dateField()}
+      ${field('Valor (R$)','v-amount')}
+      ${field('Descrição (opcional)','v-desc','text')}
+      ${contasFundoCache.length ? contaSelectHtml('v-conta', true) : '<p class="text-sm text-amber-400 mb-3">Você ainda não tem nenhuma conta cadastrada. Crie uma primeiro.</p>' + contaSelectHtml('v-conta', true)}
+      <button class="btn bg-sky-600 w-full" onclick="submitRendimento()">Salvar</button>`;
+  }
+  else if(kind==='transferencia_fundo'){
+    html = `<h2 class="font-bold mb-3">Transferir entre contas do fundo</h2>
+      <p class="text-xs text-slate-400 mb-3">Move saldo de uma conta pra outra. Não muda o total do fundo, só reorganiza onde o dinheiro está.</p>
+      ${dateField()}
+      ${field('Valor (R$)','v-amount')}
+      <label class="text-xs text-slate-400">De</label>
+      <select id="v-conta-origem" class="w-full mb-3 p-3 rounded-lg bg-slate-800 border border-slate-700">
+        ${contasFundoCache.map(c => `<option value="${c.id}">${c.nome}${c.tipo?' · '+c.tipo:''}</option>`).join('')}
+      </select>
+      <label class="text-xs text-slate-400">Para</label>
+      <select id="v-conta-destino" class="w-full mb-3 p-3 rounded-lg bg-slate-800 border border-slate-700">
+        ${contasFundoCache.map(c => `<option value="${c.id}">${c.nome}${c.tipo?' · '+c.tipo:''}</option>`).join('')}
+      </select>
+      ${field('Descrição (opcional)','v-desc','text')}
+      ${contasFundoCache.length < 2 ? '<p class="text-sm text-amber-400 mb-3">Você precisa de pelo menos 2 contas cadastradas pra transferir entre elas.</p>' : ''}
+      <button class="btn bg-indigo-600 w-full" onclick="submitTransferenciaConta()">Transferir</button>`;
   }
   else if(kind==='resgate_fundo'){
     html = `<h2 class="font-bold mb-3">Usar dinheiro do fundo para mim</h2>
@@ -666,8 +741,59 @@ async function submitFund(type, source){
   }
   const date = getDate();
   const cycle = await getCycleForDate(date);
+  const contaId = val('v-conta') || null;
   await sb.from('fund_ledger').insert({
-    cycle_id: cycle.id, date, type, source, amount, description: val('v-desc')
+    cycle_id: cycle.id, date, type, source, amount, description: val('v-desc'), conta_id: contaId
+  });
+  closeModal(); await refresh();
+}
+
+async function getSaldoContaFundo(contaId){
+  const { data } = await sb.from('fund_ledger').select('type,amount').eq('conta_id', contaId);
+  return (data||[]).reduce((s,x)=> s + (x.type==='faturamento'? x.amount : -x.amount), 0);
+}
+
+async function submitTransferenciaConta(){
+  const amount = num('v-amount'); if(!amount) return;
+  const origemId = val('v-conta-origem');
+  const destinoId = val('v-conta-destino');
+  if(!origemId || !destinoId){ alert('Escolha as duas contas.'); return; }
+  if(origemId === destinoId){ alert('Escolha contas diferentes.'); return; }
+
+  const saldoOrigem = await getSaldoContaFundo(origemId);
+  if(!(await confirmOverdraft(saldoOrigem, amount, 'o saldo dessa conta'))) return;
+
+  const origem = contasFundoCache.find(c=>c.id===origemId);
+  const destino = contasFundoCache.find(c=>c.id===destinoId);
+  const desc = val('v-desc');
+  const descCompleto = `Transferência: ${origem?.nome||'?'} → ${destino?.nome||'?'}${desc ? ' - ' + desc : ''}`;
+  const date = getDate();
+  const cycle = await getCycleForDate(date);
+
+  const { data: saida } = await sb.from('fund_ledger').insert({
+    cycle_id: cycle.id, date, type:'despesa', source:'transferencia', amount,
+    description: descCompleto, conta_id: origemId, auto_gerado:true
+  }).select().single();
+  await sb.from('fund_ledger').insert({
+    cycle_id: cycle.id, date, type:'faturamento', source:'transferencia', amount,
+    description: descCompleto, conta_id: destinoId, auto_gerado:true, origem_id: saida.id
+  });
+
+  closeModal(); await refresh();
+}
+
+async function submitRendimento(){
+  const amount = num('v-amount'); if(!amount) return;
+  const contaId = val('v-conta');
+  if(!contaId){ alert('Escolha (ou crie) uma conta pra lançar o rendimento.'); return; }
+  const conta = contasFundoCache.find(c=>c.id===contaId);
+  const desc = val('v-desc');
+  const date = getDate();
+  const cycle = await getCycleForDate(date);
+  await sb.from('fund_ledger').insert({
+    cycle_id: cycle.id, date, type:'faturamento', source:'rendimento', amount,
+    description: desc || `Rendimento${conta ? ' - ' + conta.nome + (conta.tipo?' ('+conta.tipo+')':'') : ''}`,
+    conta_id: contaId, auto_gerado:true
   });
   closeModal(); await refresh();
 }
@@ -1008,8 +1134,35 @@ async function openSectorList(kind){
   }
   else if(kind==='fundo'){
     title = 'Extrato do fundo (todos os ciclos)';
-    const { data } = await sb.from('fund_ledger').select('*').order('date', {ascending:false}).limit(100);
-    html = (data||[]).map(x => listRow(x.date, x.description, `${x.source} · ${x.type}`, x.amount, x.type==='faturamento')).join('') || '<p class="text-sm text-slate-500">Nada ainda.</p>';
+    const [{data}, {data: todos}] = await Promise.all([
+      sb.from('fund_ledger').select('*').order('date', {ascending:false}).limit(150),
+      sb.from('fund_ledger').select('conta_id,type,amount'),
+    ]);
+    await loadContasFundo();
+
+    const porConta = {};
+    let semConta = 0;
+    (todos||[]).forEach(x=>{
+      const v = x.type==='faturamento' ? x.amount : -x.amount;
+      if(x.conta_id) porConta[x.conta_id] = (porConta[x.conta_id]||0) + v;
+      else semConta += v;
+    });
+    const resumoContas = contasFundoCache.length ? `
+      <div class="card mb-3">
+        <div class="flex justify-between items-center mb-2">
+          <p class="text-xs text-slate-400">Saldo por conta</p>
+          <button class="text-xs bg-slate-700 rounded px-2 py-1" onclick="criarContaFundoERecarregar()">+ Nova conta</button>
+        </div>
+        ${contasFundoCache.map(c => `<div class="flex justify-between text-sm"><span>${c.nome}${c.tipo?' · '+c.tipo:''}</span><span class="${(porConta[c.id]||0) >= 0 ? '' : 'text-rose-400'}">${money(porConta[c.id]||0)}</span></div>`).join('')}
+        <div class="flex justify-between text-sm text-slate-400 mt-1 pt-1 border-t border-slate-700"><span>Sem conta / geral</span><span>${money(semConta)}</span></div>
+      </div>` : `
+      <div class="card mb-3 text-center">
+        <p class="text-sm text-slate-400 mb-2">Você ainda não separou o fundo por banco/investimento.</p>
+        <button class="btn bg-slate-700 text-sm" onclick="criarContaFundoERecarregar()">+ Criar primeira conta</button>
+      </div>`;
+
+    const contaNome = id => id ? (contasFundoCache.find(c=>c.id===id)?.nome || '?') : null;
+    html = resumoContas + ((data||[]).map(x => listRow(x.date, x.description, `${x.source}${contaNome(x.conta_id) ? ' · '+contaNome(x.conta_id) : ''} · ${x.type}`, x.amount, x.type==='faturamento')).join('') || '<p class="text-sm text-slate-500">Nada ainda.</p>');
   }
   else if(kind==='vale'){
     title = 'Extrato do vale (saldo contínuo)';
