@@ -1104,7 +1104,7 @@ async function descontarReceivableDeMim(id, amount, desc){
 }
 
 async function abaterReceber(id){
-  if(!confirm('Abater esse valor a receber? Ele deixa de existir e sai da lista, sem lançar nada no fundo ou no seu saldo.')) return;
+  if(!confirm('Abater esse valor a receber? Use isso tanto pra engano/duplicidade quanto pra quando a pessoa simplesmente não vai pagar essa parte. Não lança nada no fundo nem no seu saldo — o gasto original (o que já saiu do seu bolso ou do saldo do vale na hora) já cobre isso sozinho.')) return;
   await sb.from('receivables').update({ cancelado:true, cancelado_em: todayStr() }).eq('id', id);
   await refresh();
   await openSectorList('receber');
@@ -1135,12 +1135,17 @@ async function openSectorList(kind){
     html = (data||[]).map(x => listRow(x.date, x.description, x.category, x.amount, x.type==='entrada')).join('') || '<p class="text-sm text-slate-500">Nada ainda.</p>';
   }
   else if(kind==='fundo'){
-    title = 'Extrato do fundo (todos os ciclos)';
-    const [{data}, {data: todos}] = await Promise.all([
-      sb.from('fund_ledger').select('*').order('date', {ascending:false}).limit(150),
-      sb.from('fund_ledger').select('conta_id,type,amount'),
+    title = 'Extrato do fundo';
+    const [{data: todos}, {data: valePerdas}] = await Promise.all([
+      sb.from('fund_ledger').select('*').order('date', {ascending:false}).limit(500),
+      sb.from('receivables').select('*').eq('cancelado', true).not('origem_vale_id', 'is', null).order('cancelado_em', {ascending:false}),
     ]);
     await loadContasFundo();
+
+    window._fundoAll = todos || [];
+    window._fundoValePerdas = valePerdas || [];
+    if(!window._fundoFiltroPeriodo) window._fundoFiltroPeriodo = 'tudo';
+    if(!window._fundoFiltroTipo) window._fundoFiltroTipo = 'todos';
 
     const porConta = {};
     let semConta = 0;
@@ -1163,8 +1168,18 @@ async function openSectorList(kind){
         <button class="btn bg-slate-700 text-sm" onclick="criarContaFundoERecarregar()">+ Criar primeira conta</button>
       </div>`;
 
-    const contaNome = id => id ? (contasFundoCache.find(c=>c.id===id)?.nome || '?') : null;
-    html = resumoContas + ((data||[]).map(x => listRow(x.date, x.description, `${x.source}${contaNome(x.conta_id) ? ' · '+contaNome(x.conta_id) : ''} · ${x.type}`, x.amount, x.type==='faturamento')).join('') || '<p class="text-sm text-slate-500">Nada ainda.</p>');
+    html = resumoContas + `
+      <div class="flex gap-2 mb-2">
+        <button id="ff-periodo-ciclo" class="btn flex-1 text-xs" onclick="setFundoFiltro('periodo','ciclo')">Ciclo atual</button>
+        <button id="ff-periodo-tudo" class="btn flex-1 text-xs" onclick="setFundoFiltro('periodo','tudo')">Todos os ciclos</button>
+      </div>
+      <div class="flex gap-2 mb-3">
+        <button id="ff-tipo-todos" class="btn flex-1 text-xs" onclick="setFundoFiltro('tipo','todos')">Tudo</button>
+        <button id="ff-tipo-despesa" class="btn flex-1 text-xs" onclick="setFundoFiltro('tipo','despesa')">Despesas</button>
+        <button id="ff-tipo-faturamento" class="btn flex-1 text-xs" onclick="setFundoFiltro('tipo','faturamento')">Faturamento</button>
+      </div>
+      <div id="fundo-resumo"></div>
+      <div id="fundo-lista"></div>`;
   }
   else if(kind==='vale'){
     title = 'Extrato do vale (saldo contínuo)';
@@ -1346,6 +1361,72 @@ async function openSectorList(kind){
 
   body.innerHTML = `<h2 class="font-bold mb-3">${title}</h2><div class="space-y-2 max-h-[60vh] overflow-y-auto">${html}</div>`;
   if(kind==='receber') renderReceberGrupos();
+  if(kind==='fundo') renderFundoExtrato();
+}
+
+function setFundoFiltro(tipoFiltro, valor){
+  if(tipoFiltro==='periodo') window._fundoFiltroPeriodo = valor;
+  else window._fundoFiltroTipo = valor;
+  renderFundoExtrato();
+}
+
+function renderFundoExtrato(){
+  const resumoEl = document.getElementById('fundo-resumo');
+  const listaEl = document.getElementById('fundo-lista');
+  if(!resumoEl || !listaEl) return;
+
+  const periodo = window._fundoFiltroPeriodo;
+  const tipo = window._fundoFiltroTipo;
+
+  ['ciclo','tudo'].forEach(p => {
+    const btn = document.getElementById(`ff-periodo-${p}`);
+    if(btn) btn.className = `btn flex-1 text-xs ${periodo===p ? 'bg-sky-700' : 'bg-slate-700'}`;
+  });
+  ['todos','despesa','faturamento'].forEach(t => {
+    const btn = document.getElementById(`ff-tipo-${t}`);
+    if(btn) btn.className = `btn flex-1 text-xs ${tipo===t ? 'bg-sky-700' : 'bg-slate-700'}`;
+  });
+
+  let itens = window._fundoAll || [];
+  if(periodo==='ciclo') itens = itens.filter(x=>x.cycle_id===currentCycle.id);
+
+  const semTransf = itens.filter(x=>x.source!=='transferencia');
+  const totalDespesa = semTransf.filter(x=>x.type==='despesa').reduce((s,x)=>s+x.amount,0);
+  const totalFaturamento = semTransf.filter(x=>x.type==='faturamento').reduce((s,x)=>s+x.amount,0);
+
+  // perdas de vale são mostradas sempre acumuladas (histórico completo), independente do filtro de período
+  const totalValePerda = (window._fundoValePerdas||[]).reduce((s,x)=>s+x.amount,0);
+
+  const maxBar = Math.max(totalDespesa, totalFaturamento, 1);
+  const bar = (label, valor, colorClass) => `
+    <div class="mb-2">
+      <div class="flex justify-between text-xs mb-1"><span>${label}</span><span>${money(valor)}</span></div>
+      <div class="w-full bg-slate-800 rounded h-2"><div class="${colorClass} h-2 rounded" style="width:${Math.min(100, (valor/maxBar)*100)}%"></div></div>
+    </div>`;
+
+  resumoEl.innerHTML = `
+    <div class="card mb-3">
+      <p class="text-xs text-slate-400 mb-2">Resumo ${periodo==='ciclo' ? '(ciclo atual)' : '(todos os ciclos)'}</p>
+      ${bar('Faturamento', totalFaturamento, 'bg-emerald-500')}
+      ${bar('Despesas', totalDespesa, 'bg-rose-500')}
+      <div class="flex justify-between text-sm mt-2 pt-2 border-t border-slate-700">
+        <span class="text-slate-400">Diferença</span>
+        <span class="font-semibold ${totalFaturamento-totalDespesa >= 0 ? 'text-emerald-400' : 'text-rose-400'}">${money(totalFaturamento-totalDespesa)}</span>
+      </div>
+    </div>
+    ${totalValePerda > 0 ? `
+    <div class="card mb-3 border border-orange-800">
+      <div class="flex justify-between items-center mb-2">
+        <p class="text-xs text-slate-400">Vale usado e não reembolsado (histórico, perda real mas não é uma despesa lançada)</p>
+        <p class="font-semibold text-orange-400">${money(totalValePerda)}</p>
+      </div>
+      <div class="space-y-1">${(window._fundoValePerdas||[]).slice(0,10).map(x => listRow(x.cancelado_em || x.date, x.description, 'vale não reembolsado', x.amount, false)).join('')}</div>
+    </div>` : ''}
+  `;
+
+  const contaNome = id => id ? (contasFundoCache.find(c=>c.id===id)?.nome || '?') : null;
+  const filtrados = tipo==='todos' ? itens : itens.filter(x=>x.type===tipo);
+  listaEl.innerHTML = filtrados.map(x => listRow(x.date, x.description, `${x.source}${contaNome(x.conta_id) ? ' · '+contaNome(x.conta_id) : ''} · ${x.type}`, x.amount, x.type==='faturamento')).join('') || '<p class="text-sm text-slate-500">Nada nesse filtro.</p>';
 }
 
 function setReceberAgrupamento(campo){
