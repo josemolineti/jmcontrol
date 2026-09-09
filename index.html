@@ -1103,9 +1103,24 @@ async function descontarReceivableDeMim(id, amount, desc){
   await openSectorList('receber');
 }
 
-async function abaterReceber(id){
-  if(!confirm('Abater esse valor a receber? Use isso tanto pra engano/duplicidade quanto pra quando a pessoa simplesmente não vai pagar essa parte. Não lança nada no fundo nem no seu saldo — o gasto original (o que já saiu do seu bolso ou do saldo do vale na hora) já cobre isso sozinho.')) return;
-  await sb.from('receivables').update({ cancelado:true, cancelado_em: todayStr() }).eq('id', id);
+async function abaterReceber(id, amount, desc){
+  const input = prompt(`Quanto você quer abater? (pendente: ${money(amount)})\nSe for menos que o total, o restante continua pendente pra receber.`, amount.toFixed(2).replace('.',','));
+  if(input === null) return;
+  const valorAbatido = parseFloat(String(input).replace(/\./g,'').replace(',','.'));
+  if(!valorAbatido || valorAbatido <= 0) return;
+  const valorAplicado = Math.min(valorAbatido, amount);
+  if(!confirm(`Abater ${money(valorAplicado)} (${desc||'sem descrição'})? Não lança nada no fundo nem no seu saldo — o gasto original (o que já saiu do seu bolso ou do saldo do vale na hora) já cobre isso sozinho.`)) return;
+
+  const date = todayStr();
+  const restante = amount - valorAplicado;
+  if(restante > 0.009){
+    await sb.from('receivables').update({
+      amount: restante,
+      description: `${desc || ''} (abatido ${money(valorAplicado)} em ${new Date(date).toLocaleDateString('pt-BR')})`
+    }).eq('id', id);
+  } else {
+    await sb.from('receivables').update({ cancelado:true, cancelado_em: date }).eq('id', id);
+  }
   await refresh();
   await openSectorList('receber');
 }
@@ -1450,7 +1465,7 @@ function renderReceberGrupos(){
         <div class="flex gap-1 flex-wrap justify-end">
           <button class="text-xs bg-emerald-700 rounded px-2 py-1" onclick="marcarRecebido('${x.id}', ${x.amount}, '${x.destino}', '${(x.description||'').replace(/'/g,"\\'")}')">Recebido</button>
           ${x.destino==='fundo' ? `<button class="text-xs bg-cyan-700 rounded px-2 py-1" onclick="descontarReceivableDeMim('${x.id}', ${x.amount}, '${(x.description||'').replace(/'/g,"\\'")}')">Descontar de mim</button>` : ''}
-          <button class="text-xs bg-slate-700 rounded px-2 py-1" onclick="abaterReceber('${x.id}')">Abater</button>
+          <button class="text-xs bg-slate-700 rounded px-2 py-1" onclick="abaterReceber('${x.id}', ${x.amount}, '${(x.description||'').replace(/'/g,"\\'")}')">Abater</button>
         </div>
       </div>
     </div>`;
